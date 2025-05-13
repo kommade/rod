@@ -1,13 +1,7 @@
-#[allow(unused_imports)]
-
+//#[cfg(test)]
 mod tests;
-
-#[derive(Debug, Clone)]
-pub enum RodValidateError {
-    InvalidLength,
-    InvalidFormat,
-    OutOfRange,
-}
+mod errors;
+pub use errors::*;
 
 pub trait RodValidate {
     fn validate(&self) -> Result<(), RodValidateError>;

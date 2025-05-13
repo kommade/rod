@@ -4,5 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-regex = "1.11.1"
+regex = { version = "1.11.1", optional = true }
 rod_derive = { path = "./rod_derive" }
+
+[features]
+default = ["regex"]
+regex = ["dep:regex", "rod_derive/regex"]
+
+
