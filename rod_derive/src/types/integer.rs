@@ -1,11 +1,13 @@
 use proc_macro_error::abort;
-use syn::{parse::Parse, Expr, ExprRange, Ident, LitInt};
+use syn::{parse::Parse, LitInt};
 use quote::{quote, ToTokens};
 
 use crate::GetValidations;
 
 use super::LengthOrSize;
 
+/// `IntegerSign` is an enum that represents the sign of an integer.
+/// It is used to specify whether the integer should be positive, negative, nonpositive, or nonnegative.
 pub(crate) enum IntegerSign {
     Positive,
     Negative,
@@ -38,7 +40,33 @@ impl Parse for IntegerSign {
     }
 }
 
-pub(crate) struct RodIntegerContent {
+/// `RodIntegerContent` is a struct that represents the content of an integer field in a Rod entity.
+/// It is used to parse and validate integer attributes in the `#[rod]` attribute macro.
+/// This struct includes optional fields for size, sign, and step, which are used in validation checks.
+/// # Attributes
+/// - `size`: An optional attribute that specifies the a range for the integer to be in, or an exact value for the integer.
+/// - `sign`: An optional attribute that specifies the sign of the integer, see [`IntegerSign`][crate::types::integer::IntegerSign] enum.
+/// - `step`: An optional attribute that specifies that the integer must be a multiple of this value.
+/// # Usage
+/// ```
+/// use rod_derive::RodValidate;
+/// 
+/// #[derive(RodValidate)]
+/// struct MyEntity {
+///    #[rod(
+///         i32 {
+///             size: 1..=10, // or size: 6
+///             sign: Positive,
+///             step: 2,
+///         }
+///     )]
+///     my_integer: i32,
+/// }
+/// 
+/// let entity = MyEntity { my_integer: 6 };
+/// assert!(entity.validate().is_ok());
+/// ```
+pub struct RodIntegerContent {
     size: Option<LengthOrSize>,
     sign: Option<IntegerSign>,
     step: Option<LitInt>,

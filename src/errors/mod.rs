@@ -1,10 +1,5 @@
 use std::{error::Error, fmt::{Display, Formatter}};
 
-mod string;
-pub use string::StringValidation;
-mod integer;
-pub use integer::IntegerValidation;
-
 macro_rules! impl_from_integer {
     ($name:ident, $integer:ty) => {
         impl From<$integer> for Integer {
@@ -51,10 +46,21 @@ impl Display for Integer {
     }
 }
 
+mod string;
+pub use string::StringValidation;
+mod integer;
+pub use integer::IntegerValidation;
+mod literal;
+pub use literal::LiteralValidation;
+mod option;
+pub use option::OptionValidation;
+
 #[derive(Debug, Clone)]
 pub enum RodValidateError {
     String(string::StringValidation),
     Integer(integer::IntegerValidation),
+    Literal(literal::LiteralValidation),
+    Option(option::OptionValidation),
 }
 
 impl Error for RodValidateError {}
@@ -65,6 +71,8 @@ impl Display for RodValidateError {
         match self {
             RodValidateError::String(validation) => write!(f, "Error validating string: {}", validation),
             RodValidateError::Integer(validation) => write!(f, "Error validating integer: {}", validation),
+            RodValidateError::Literal(validation) => write!(f, "Error validating literal: {}", validation),
+            RodValidateError::Option(validation) => write!(f, "Error validating option: {}", validation),
         }
     }
 }

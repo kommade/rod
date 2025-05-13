@@ -1,7 +1,11 @@
 use proc_macro_error::abort;
-use quote::{quote, ToTokens};
+use quote::quote;
+#[cfg(feature = "regex")]
+use quote::ToTokens;
 
-use syn::{parse::Parse, Ident, LitStr, Token};
+use syn::{parse::Parse, LitStr};
+#[cfg(feature = "regex")]
+use syn::Ident;
 
 use crate::GetValidations;
 
@@ -17,6 +21,9 @@ mod regex_literals {
     pub(crate) const DATETIME_REGEX: &str = r#"^(?:\d{4})-(?:\d{2})-(?:\d{2})T(?:\d{2}):(?:\d{2}):(?:\d{2}(?:\.\d*)?)(?:(?:-(?:\d{2}):(?:\d{2})|Z)?)$"#;
 }
 
+/// `StringFormat` is an enum that represents the format of a string field.
+/// It includes variants for common formats such as email, URL, UUID, and IP addresses.
+/// The `Regex` variant allows for custom regex patterns.
 #[cfg(feature = "regex")]
 pub(crate) enum StringFormat {
     Regex(LitStr),
@@ -67,15 +74,52 @@ impl Parse for StringFormat {
     }
 }
 
-pub(crate) struct RodStringContent {
+/// `RodStringContent` is a struct that represents the content of a string field in a Rod entity.
+/// It is used to parse and validate string attributes in the `#[rod]` attribute macro.
+/// This struct includes optional fields for length, format, starts_with, ends_with, and includes, 
+/// which are used in validation checks.
+/// # Attributes
+/// - `length`: An optional attribute that specifies the length of the string.
+/// - `format`: An optional attribute that specifies the format of the string, such as email, URL, UUID, or any custom regex. See [`StringFormat`][crate::types::string::StringFormat] enum. Note that this attribute requires the `regex` feature to be enabled.
+/// - `starts_with`: An optional attribute that specifies the string must start with this value.
+/// - `ends_with`: An optional attribute that specifies the string must end with this value.
+/// - `includes`: An optional attribute that specifies the string must include this value.
+/// # Usage
+/// ```
+/// use rod_derive::RodValidate;
+/// 
+/// #[derive(RodValidate)]
+/// struct MyEntity {
+///    #[rod(
+///        String {
+///           length: 5..=20,
+///           starts_with: "Hello",
+///           ends_with: "World",
+///           includes: "foo",
+///        }
+///    )]
+///    my_field: String,
+/// }
+/// 
+/// let entity = MyEntity {
+///     my_field: "Hello foo World".to_string(),
+/// };
+/// 
+/// assert!(entity.validate().is_ok());
+/// ```
+/// 
+pub struct RodStringContent {
     length: Option<LengthOrSize>,
     #[cfg(feature = "regex")]
     format: Option<StringFormat>,
+    starts_with: Option<LitStr>,
+    ends_with: Option<LitStr>,
+    includes: Option<LitStr>,
 }
 
 impl GetValidations for RodStringContent {
     fn get_validations(&self, field_name: proc_macro2::TokenStream) -> Vec<proc_macro2::TokenStream> {
-        let mut validations = Vec::with_capacity(2);
+        let mut validations = Vec::with_capacity(4);
         
         if let Some(length) = &self.length {
             validations.push(length.validate_string(field_name.clone()));
@@ -100,6 +144,30 @@ impl GetValidations for RodStringContent {
             });
         }
 
+        if let Some(starts_with) = &self.starts_with {
+            validations.push(quote! {
+                if !#field_name.starts_with(#starts_with) {
+                    return Err(RodValidateError::String(StringValidation::StartsWith(#field_name.to_string(), #starts_with)));
+                }
+            });
+        }
+
+        if let Some(ends_with) = &self.ends_with {
+            validations.push(quote! {
+                if !#field_name.ends_with(#ends_with) {
+                    return Err(RodValidateError::String(StringValidation::EndsWith(#field_name.to_string(), #ends_with)));
+                }
+            });
+        }
+
+        if let Some(includes) = &self.includes {
+            validations.push(quote! {
+                if !#field_name.contains(#includes) {
+                    return Err(RodValidateError::String(StringValidation::Includes(#field_name.to_string(), #includes)));
+                }
+            });
+        }
+
         validations
     }
 }
@@ -109,6 +177,9 @@ impl Parse for RodStringContent {
         let mut length = None;
         #[cfg(feature = "regex")]
         let mut format = None;
+        let mut starts_with = None;
+        let mut ends_with = None;
+        let mut includes = None;
 
         while !input.is_empty() {
             let lookahead = input.lookahead1();
@@ -129,11 +200,29 @@ impl Parse for RodStringContent {
                     {
                         abort!(ident.span(), "The `format` attribute is not available. Please enable the `regex` feature.");
                     }
+                } else if ident == "includes" {
+                    check_already_used_attr!(includes, ident.span());
+                    input.parse::<syn::Token![:]>()?;
+                    includes = Some(input.parse()?);
+                } else if ident == "starts_with" {
+                    check_already_used_attr!(starts_with, ident.span());
+                    input.parse::<syn::Token![:]>()?;
+                    starts_with = Some(input.parse()?);
+                } else if ident == "ends_with" {
+                    check_already_used_attr!(ends_with, ident.span());
+                    input.parse::<syn::Token![:]>()?;
+                    ends_with = Some(input.parse()?);
                 } else {
-                    return Err(lookahead.error());
+                    abort!(
+                        ident.span(),
+                        "Unknown attribute `{}`", ident
+                    );
                 }
             } else {
-                return Err(lookahead.error());
+                abort!(
+                    input.span(),
+                    "Expected an identifier"
+                );
             }
 
             if input.peek(syn::Token![,]) {
@@ -144,7 +233,10 @@ impl Parse for RodStringContent {
         Ok(RodStringContent { 
             length, 
             #[cfg(feature = "regex")]
-            format 
+            format,
+            starts_with,
+            ends_with,
+            includes,
         })
     }
 }

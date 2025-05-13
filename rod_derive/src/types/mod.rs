@@ -1,5 +1,5 @@
 use proc_macro_error::abort;
-use syn::{parse::Parse, ExprRange, Ident, LitInt, Token};
+use syn::{parse::Parse, ExprRange, LitInt, Token};
 use quote::quote;
 
 macro_rules! check_already_used_attr {
@@ -61,7 +61,7 @@ impl LengthOrSize {
             }
             LengthOrSize::Range(range) => {
                 quote! {
-                    if !(#range).contains(&#field_name.len()) {
+                    if !(#range).contains(&#field_name) {
                         return Err(RodValidateError::Integer(IntegerValidation::Size(#field_name.into(), format!("to be in the range {:?}", #range))));
                     }
                 }
@@ -71,7 +71,16 @@ impl LengthOrSize {
 }
 
 mod string;
-pub(crate) use string::RodStringContent;
+pub use string::RodStringContent;
 
 mod integer;
-pub(crate) use integer::RodIntegerContent;
+pub use integer::RodIntegerContent;
+
+mod literal;
+pub use literal::RodLiteralContent;
+
+mod boolean;
+pub use boolean::RodBooleanContent;
+
+mod option;
+pub use option::RodOptionContent;

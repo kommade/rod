@@ -1,5 +1,4 @@
 extern crate proc_macro;
-use std::fmt::Display;
 
 use proc_macro::TokenStream;
 use proc_macro_error::{abort, proc_macro_error};
@@ -9,10 +8,11 @@ use syn::spanned::Spanned;
 use syn::{
     braced, parse_macro_input, Data, DeriveInput, Fields, Ident, Result as SynResult, Type
 };
-use types::{RodIntegerContent, RodStringContent};
+use types::{RodBooleanContent, RodIntegerContent, RodLiteralContent, RodOptionContent, RodStringContent};
 
 mod types;
 
+#[inline(always)]
 fn get_type_ident(ty: &Type) -> Option<&Ident> {
     if let Type::Path(type_path) = ty {
         type_path.path.segments.last().map(|s| &s.ident)
@@ -21,76 +21,80 @@ fn get_type_ident(ty: &Type) -> Option<&Ident> {
     }
 }
 
+fn recurse_rod_attr_opt(input: &RodAttr, level: usize) -> Option<(RodAttrType, usize)> {
+    match &input.content {
+        RodAttrContent::Option(content) => {
+            if let Some(inner) = &content.inner {
+                recurse_rod_attr_opt(&inner.as_ref(), level + 1)
+            } else {
+                None
+            }
+        }
+        _ => {
+            Some((input.ty.clone(), level))
+        }
+    }
+}
+
+fn recurse_type_path(ty: &Type, level: usize) -> Option<(RodAttrType, usize)> {
+    if let Type::Path(type_path) = ty {
+        if let Some(segment) = type_path.path.segments.last() {
+            if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                if let Some(arg) = args.args.first() {
+                    if let syn::GenericArgument::Type(ty) = arg {
+                        return recurse_type_path(ty, level + 1);
+                    }
+                }
+            } else {
+                return Some((ty.into(), level));
+            }
+        }
+    }
+    None
+}
+
 macro_rules! assert_type {
     ($name:expr, $ty:expr, $expected:expr) => {
         let actual_type: RodAttrType = $ty.into();
-        if actual_type != $expected {
+        if actual_type != $expected.ty && !matches!($expected.ty, RodAttrType::Literal(_)) {
             abort!(
                 $name.span(), "Expected `{}` to be a {} type, but found {}", 
-                $name.unwrap(), $expected, actual_type; 
+                $name.unwrap(), $expected.ty, actual_type; 
                 help = "The type of the field must match the expected type in the attribute.";
             );
         }
+        if matches!($expected.ty, RodAttrType::Option(_)) {
+            let inner_type = recurse_rod_attr_opt(&$expected, 0);
+            let inner_actual_type = recurse_type_path($ty, 0);
+            if inner_type.is_some() && inner_type != inner_actual_type {
+                if let Some((inner_type, level)) = inner_type {
+                    if let Some((inner_actual_type, actual_level)) = inner_actual_type {
+                        if level != actual_level {
+                            abort!(
+                                $name.span(), "Expected `{}` to be a {}-nested Option, but found {}-nested Option",
+                                $name.unwrap(), level, actual_level;
+                                help = "The type of the field must match the expected type in the attribute.";
+                            );
+                        } else {
+                            abort!(
+                                $name.span(), "Expected `{}` to be a {} type, but found {}",
+                                $name.unwrap(), inner_type, inner_actual_type;
+                                help = "The type of the field must match the expected type in the attribute.";
+                            );
+                        }
+                    } 
+                }
+            }
+        }
     };
-}
-
-#[derive(Debug, PartialEq)]
-enum RodAttrType {
-    String(Ident),
-    Integer(Ident),
-}
-
-impl Display for RodAttrType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RodAttrType::String(ident) => write!(f, "String({})", ident),
-            RodAttrType::Integer(ident) => write!(f, "Integer({})", ident),
-        }
-    }
-}
-
-impl From<Type> for RodAttrType {
-    fn from(ty: Type) -> RodAttrType {
-        let type_ident = get_type_ident(&ty).unwrap_or_else(|| {
-            abort!(
-                ty.span(), "Expected a type path, but found: {:?}", ty
-            );
-        });
-        match type_ident.to_string().as_str() {
-            "String" | "str" | "OsString" | "OsStr" | "PathBuf" | "Path" | "Cow" => RodAttrType::String(type_ident.clone()),
-            "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
-            | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => RodAttrType::Integer(type_ident.clone()),
-            _ => abort!(
-                ty.span(), "Unsupported type: {}", type_ident
-            ),
-        }
-    }
-}
-
-impl From<&Type> for RodAttrType {
-    fn from(ty: &Type) -> RodAttrType {
-        let type_ident = get_type_ident(ty).unwrap_or_else(|| {
-            abort!(
-                ty.span(), "Expected a type path, but found: {:?}", ty
-            );
-        });
-        match type_ident.to_string().as_str() {
-            "String" | "str" | "OsString" | "OsStr" | "PathBuf" | "Path" | "Cow" => RodAttrType::String(type_ident.clone()),
-            "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
-            | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => RodAttrType::Integer(type_ident.clone()),
-            _ => abort!(
-                ty.span(), "Unsupported type: {}", type_ident
-            ),
-        }
-    }
 }
 
 struct RodNone;
 
 impl Parse for RodNone {
     fn parse(input: ParseStream) -> SynResult<Self> {
-        let skip: Ident = input.parse()?;
-        if skip != "none" {
+        let none: Ident = input.parse()?;
+        if none != "none" {
             return Err(input.error("Expected `none`"));
         }
         Ok(RodNone)
@@ -101,42 +105,147 @@ pub(crate) trait GetValidations {
     fn get_validations(&self, field_name: proc_macro2::TokenStream) -> Vec<proc_macro2::TokenStream>;
 }
 
+
 struct RodAttr {
     ty: RodAttrType,
     content: RodAttrContent,
 }
 
-enum RodAttrContent {
-    String(RodStringContent),
-    Integer(RodIntegerContent),
+macro_rules! impl_rod_types {
+    (
+        $(
+            $variant:ident {
+                ident: $ident_ty:ty,
+                content: $content_ty:ty,
+                match: [$($ty_str:expr),*]
+            }
+        ),* $(,)?
+    ) => {
+        #[derive(Debug, PartialEq, Clone)]
+        enum RodAttrType {
+            $(
+                $variant($ident_ty),
+            )*
+        }
+
+        impl std::fmt::Display for RodAttrType {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    $(
+                        RodAttrType::$variant(ident) => write!(f, concat!(stringify!($variant), "({})"), ident),
+                    )*
+                }
+            }
+        }
+
+        impl From<Type> for RodAttrType {
+            fn from(ty: Type) -> RodAttrType {
+                let type_ident = get_type_ident(&ty).unwrap_or_else(|| {
+                    abort!(
+                        ty.span(), "Expected a type path, but found: {:?}", ty
+                    );
+                });
+                let type_str = type_ident.to_string();
+                $(
+                    if [$( $ty_str ),*].contains(&type_str.as_str()) {
+                        return RodAttrType::$variant(type_ident.clone());
+                    }
+                )*
+                abort!(
+                    ty.span(), "Unsupported type: {}", type_ident
+                );
+            }
+        }
+
+        impl From<&Type> for RodAttrType {
+            fn from(ty: &Type) -> RodAttrType {
+                let type_ident = get_type_ident(ty).unwrap_or_else(|| {
+                    abort!(
+                        ty.span(), "Expected a type path, but found: {:?}", ty
+                    );
+                });
+                let type_str = type_ident.to_string();
+                $(
+                    if [$( $ty_str ),*].contains(&type_str.as_str()) {
+                        return RodAttrType::$variant(type_ident.clone());
+                    }
+                )*
+                abort!(
+                    ty.span(), "Unsupported type: {}", type_ident
+                );
+            }
+        }
+
+        enum RodAttrContent {
+            $(
+                $variant($content_ty),
+            )*
+        }
+
+        impl Parse for RodAttr {
+            fn parse(input: ParseStream) -> SynResult<Self> {
+                let ty: Type = input.parse()?;
+                let rod_type: RodAttrType = ty.into();
+                let inner;
+                braced!(inner in input);
+                let content = match rod_type {
+                    $(
+                        RodAttrType::$variant(_) => {
+                            let content: $content_ty = inner.parse()?;
+                            RodAttrContent::$variant(content)
+                        }
+                    ),*
+                };
+                Ok(RodAttr { ty: rod_type, content })
+            }
+        }
+    }
 }
 
-impl Parse for RodAttr {
-    fn parse(input: ParseStream) -> SynResult<Self> {
-        let ty: Type = input.parse()?;
-        let rod_type: RodAttrType = ty.into();
-        let inner;
-        braced!(inner in input);
-        let content = match rod_type {
-            RodAttrType::String(_) => {
-                let string_content: RodStringContent = inner.parse()?;
-                RodAttrContent::String(string_content)
-            }
-            RodAttrType::Integer(_) => {
-                let integer_content: RodIntegerContent = inner.parse()?;
-                RodAttrContent::Integer(integer_content)
-            }
-        };
-        Ok(RodAttr { ty: rod_type, content })
+impl_rod_types! {
+    String {
+        ident: Ident,
+        content: RodStringContent,
+        match: ["String", "str", "OsString", "OsStr", "PathBuf", "Path", "Cow"]
+    },
+    Integer {
+        ident: Ident,
+        content: RodIntegerContent,
+        match: ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize"]
+    },
+    Literal {
+        ident: Ident,
+        content: RodLiteralContent,
+        match: ["Literal"]
+    },
+    Boolean {
+        ident: Ident,
+        content: RodBooleanContent,
+        match: ["bool"]
+    },
+    Option {
+        ident: Ident,
+        content: RodOptionContent,
+        match: ["Option"]
     }
+}
+
+macro_rules! rod_content_match {
+    ($content:expr, $field_access:expr, [ $( $variant:ident ),* ]) => {
+        match $content {
+            $(
+                RodAttrContent::$variant(ref content) => content.get_validations($field_access),
+            )*
+        }
+    };
 }
 
 /// Derives the `RodValidate` trait for a struct.
 ///
 /// Implements validation logic for struct fields annotated with `#[rod(...)]`.
 /// Fields without the attribute are required to implement `RodValidate`.
-/// String and integer constraints are supported via the attribute.
-/// 
+/// Many standard types are supported, including [`RodStringContent`][crate::types::RodStringContent], [`RodIntegerContent`][crate::types::RodIntegerContent], [`RodLiteralContent`][crate::types::RodLiteralContent], [`RodBooleanContent`][crate::types::RodBooleanContent], and [`RodOptionContent`][crate::types::RodOptionContent]. 
+/// To see the available attributes, refer to the documentation for each type.
 /// # Examples
 /// 
 /// ```
@@ -147,13 +256,12 @@ impl Parse for RodAttr {
 ///     #[rod(
 ///         String {
 ///             length: 3..=12, // Length between 3 and 12 characters
-///             format: "^[a-zA-Z0-9_]+$", // Alphanumeric and underscores only
 ///         }
 ///     )]
 ///     username: String,
 ///     #[rod(
-///         Integer {
-///             range: 18..=99, // Age between 18 and 99
+///         u8 {
+///             size: 18..=99, // Age between 18 and 99
 ///         }
 ///     )]
 ///     age: u8,
@@ -177,7 +285,6 @@ impl Parse for RodAttr {
 ///     #[rod(
 ///         String {
 ///             length: 5..=10,
-///             format: "^[a-zA-Z]+$",
 ///         }
 ///     )]
 ///     field1: String,
@@ -198,10 +305,10 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
                 let field_name = &field.ident;
                 if field.attrs.is_empty() {
                     validations.push(quote! {
-                        fn assert_rod_validate<T: RodValidate>(value: &T) -> Result<(), RodValidateError> {
+                        fn assert_impl_rod_validate<T: RodValidate>(value: &T) -> Result<(), RodValidateError> {
                             value.validate()
                         }
-                        assert_rod_validate(&self.#field_name)?;
+                        assert_impl_rod_validate(&self.#field_name)?;
                     });
                 } else {
                     for attr in &field.attrs {
@@ -211,16 +318,12 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
                             }
                             match attr.parse_args::<RodAttr>() {
                                 Ok(rod_attr) => {
-                                    let rod_attr_type = rod_attr.ty;
-                                    assert_type!(field_name.as_ref(), &field.ty, rod_attr_type);
-                                    let validations_for_field = match rod_attr.content {
-                                        RodAttrContent::String(ref content) => content.get_validations(
-                                            quote! { self.#field_name }
-                                        ),
-                                        RodAttrContent::Integer(ref content) => content.get_validations(
-                                            quote! { self.#field_name }
-                                        ),
-                                    };
+                                    assert_type!(field_name.as_ref(), &field.ty, rod_attr);
+                                    let validations_for_field = rod_content_match!(
+                                        rod_attr.content,
+                                        quote! { self.#field_name },
+                                        [String, Integer, Literal, Boolean, Option]
+                                    );
                                     validations.extend(validations_for_field);
                                 }
                                 Err(e) => {
@@ -247,10 +350,10 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
                         if field.attrs.is_empty() {
                             validations.push(quote! {
                                 if let Self::#variant_ident { #field_name, .. } = self {
-                                    fn assert_rod_validate<T: RodValidate>(value: &T) -> Result<(), RodValidateError> {
+                                    fn assert_impl_rod_validate<T: RodValidate>(value: &T) -> Result<(), RodValidateError> {
                                         value.validate()
                                     }
-                                    assert_rod_validate(#field_name)?;
+                                    assert_impl_rod_validate(#field_name)?;
                                 }
                             });
                         } else {
@@ -261,16 +364,12 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
                                     }
                                     match attr.parse_args::<RodAttr>() {
                                         Ok(rod_attr) => {
-                                            let rod_attr_type = rod_attr.ty;
-                                            assert_type!(field_name.as_ref(), &field.ty, rod_attr_type);
-                                            let validations_for_field = match rod_attr.content {
-                                                RodAttrContent::String(ref content) => content.get_validations(
-                                                    quote! { #field_access }
-                                                ),
-                                                RodAttrContent::Integer(ref content) => content.get_validations(
-                                                    quote! { #field_access }
-                                                ),
-                                            };
+                                            assert_type!(Some("<unnamed field>"), &field.ty, rod_attr);
+                                            let validations_for_field = rod_content_match!(
+                                                rod_attr.content,
+                                                quote! { #field_access },
+                                                [String, Integer, Literal, Boolean, Option]
+                                            );
                                             for v in validations_for_field {
                                                 validations.push(quote! {
                                                     if let Self::#variant_ident { #field_name, .. } = self {
@@ -302,10 +401,10 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
                         if field.attrs.is_empty() {
                             validations.push(quote! {
                                 if let Self::#variant_ident(inner) = self {
-                                    fn assert_rod_validate<T: RodValidate>(value: &T) -> Result<(), RodValidateError> {
+                                    fn assert_impl_rod_validate<T: RodValidate>(value: &T) -> Result<(), RodValidateError> {
                                         value.validate()
                                     }
-                                    assert_rod_validate(#field_access)?;
+                                    assert_impl_rod_validate(#field_access)?;
                                 }
                             });
                         } else {
@@ -316,19 +415,15 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
                                     }
                                     match attr.parse_args::<RodAttr>() {
                                         Ok(rod_attr) => {
-                                            let rod_attr_type = rod_attr.ty;
-                                            assert_type!(Some("<unnamed field>"), &field.ty, rod_attr_type);
-                                            let validations_for_field = match rod_attr.content {
-                                                RodAttrContent::String(ref content) => content.get_validations(
-                                                    quote! { #field_access }
-                                                ),
-                                                RodAttrContent::Integer(ref content) => content.get_validations(
-                                                    quote! { #field_access }
-                                                ),
-                                            };
+                                            assert_type!(Some("<unnamed field>"), &field.ty, rod_attr);
+                                            let validations_for_field = rod_content_match!(
+                                                rod_attr.content,
+                                                quote! { #field_access },
+                                                [String, Integer, Literal, Boolean, Option]
+                                            );
                                             for v in validations_for_field {
                                                 validations.push(quote! {
-                                                    if let Self::#variant_ident(inner) = self {
+                                                    if let &Self::#variant_ident(inner) = self {
                                                         #v
                                                     }
                                                 });
