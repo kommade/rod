@@ -1,51 +1,16 @@
 use proc_macro_error::abort;
-use syn::{parse::Parse, LitInt};
-use quote::{quote, ToTokens};
+use syn::{parse::Parse, Ident, LitInt};
+use quote::quote;
 
-use crate::GetValidations;
 
-use super::LengthOrSize;
-
-/// `IntegerSign` is an enum that represents the sign of an integer.
-/// It is used to specify whether the integer should be positive, negative, nonpositive, or nonnegative.
-pub(crate) enum IntegerSign {
-    Positive,
-    Negative,
-    Nonpositive,
-    Nonnegative,
-}
-
-impl ToTokens for IntegerSign {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let ident = match self {
-            IntegerSign::Positive => "Positive",
-            IntegerSign::Negative => "Negative",
-            IntegerSign::Nonpositive => "Nonpositive",
-            IntegerSign::Nonnegative => "Nonnegative",
-        };
-        tokens.extend(quote!(#ident));
-    }
-}
-
-impl Parse for IntegerSign {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let ident: syn::Ident = input.parse()?;
-        match ident.to_string().as_str() {
-            "Positive" => Ok(IntegerSign::Positive),
-            "Negative" => Ok(IntegerSign::Negative),
-            "Nonpositive" => Ok(IntegerSign::Nonpositive),
-            "Nonnegative" => Ok(IntegerSign::Nonnegative),
-            _ => Err(input.error("Expected `sign` to be one of Positive, Negative, Nonpositive, Nonnegative")),
-        }
-    }
-}
+use super::{LengthOrSize, NumberSign};
 
 /// `RodIntegerContent` is a struct that represents the content of an integer field in a Rod entity.
 /// It is used to parse and validate integer attributes in the `#[rod]` attribute macro.
 /// This struct includes optional fields for size, sign, and step, which are used in validation checks.
 /// # Attributes
-/// - `size`: An optional attribute that specifies the a range for the integer to be in, or an exact value for the integer.
-/// - `sign`: An optional attribute that specifies the sign of the integer, see [`IntegerSign`][crate::types::integer::IntegerSign] enum.
+/// - `size`: An optional attribute that specifies a range for the integer to be in, or an exact value for the integer.
+/// - `sign`: An optional attribute that specifies the sign of the integer, see [`NumberSign`][crate::types::NumberSign] enum.
 /// - `step`: An optional attribute that specifies that the integer must be a multiple of this value.
 /// # Usage
 /// ```
@@ -68,41 +33,38 @@ impl Parse for IntegerSign {
 /// ```
 pub struct RodIntegerContent {
     size: Option<LengthOrSize>,
-    sign: Option<IntegerSign>,
+    sign: Option<NumberSign>,
     step: Option<LitInt>,
 }
 
-impl GetValidations for RodIntegerContent {
-    fn get_validations(&self, field_name: proc_macro2::TokenStream) -> Vec<proc_macro2::TokenStream> {
-        let mut validations = Vec::with_capacity(3);
-        
-        if let Some(size) = &self.size {
-            validations.push(size.validate_integer(field_name.clone()));
-        }
-
-        if let Some(sign) = &self.sign {
+impl RodIntegerContent {
+    pub(crate) fn get_validations(&self, field_name: &Ident) -> proc_macro2::TokenStream {
+        let size_opt = self.size.as_ref().map(|size| size.validate_integer(field_name));
+        let sign_opt = self.sign.as_ref().map(|sign| {
             let sign_check = match sign {
-                IntegerSign::Positive => quote!(#field_name > 0),
-                IntegerSign::Negative => quote!(#field_name < 0),
-                IntegerSign::Nonpositive => quote!(#field_name <= 0),
-                IntegerSign::Nonnegative => quote!(#field_name >= 0),
+                NumberSign::Positive => quote!(*#field_name > 0),
+                NumberSign::Negative => quote!(*#field_name < 0),
+                NumberSign::Nonpositive => quote!(*#field_name <= 0),
+                NumberSign::Nonnegative => quote!(*#field_name >= 0),
             };
-            validations.push(quote! {
+            quote! {
                 if !(#sign_check) {
-                    return Err(RodValidateError::Integer(IntegerValidation::Sign(#field_name.into(), #sign)));
+                    return Err(RodValidateError::Integer(IntegerValidation::Sign(#field_name.clone().into(), #sign)));
                 }
-            });
-        }
-
-        if let Some(step) = &self.step {
-            validations.push(quote! {
+            }
+        });
+        let step_opt = self.step.as_ref().map(|step| {
+            quote! {
                 if #field_name % #step != 0 {
-                    return Err(RodValidateError::Integer(IntegerValidation::Step(#field_name.into(), #step.into())));
+                    return Err(RodValidateError::Integer(IntegerValidation::Step(#field_name.clone().into(), #step.into())));
                 }
-            });
+            }
+        });
+        quote! {
+            #size_opt
+            #sign_opt
+            #step_opt
         }
-
-        validations
     }
 }
 

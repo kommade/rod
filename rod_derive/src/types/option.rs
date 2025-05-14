@@ -1,7 +1,7 @@
-use syn::parse::Parse;
-use quote::quote;
+use syn::{parse::Parse, Ident};
+use quote::{format_ident, quote};
 
-use crate::{GetValidations, RodAttr, RodAttrContent};
+use crate::{RodAttr, RodAttrContent};
 
 macro_rules! rod_content_match {
     ($content:expr, $field_access:expr, [ $( $variant:ident ),* ]) => {
@@ -61,31 +61,27 @@ impl Parse for RodOptionContent {
     }
 }
 
-impl GetValidations for RodOptionContent {
-    fn get_validations(&self, field_name: proc_macro2::TokenStream) -> Vec<proc_macro2::TokenStream> {
+impl RodOptionContent {
+    pub(crate) fn get_validations(&self, field_name: &Ident) -> proc_macro2::TokenStream {
         if self.inner.is_none() {
-            return vec![
-                quote! {
-                    if #field_name.is_some() {
-                        return Err(RodValidateError::Option(OptionValidation::Some(
-                            format!("{:?}", #field_name)
-                        )));
-                    }
+            quote! {
+                if #field_name.is_some() {
+                    return Err(RodValidateError::Option(OptionValidation::Some(
+                        format!("{:?}", #field_name)
+                    )));
                 }
-            ];
+            }
         } else {
             let inner_validation = rod_content_match!(
                 &self.inner.as_ref().unwrap().content,
-                quote!{ opt },
-                [String, Integer, Literal, Boolean, Option]
+                &format_ident!("opt"),
+                [String, Integer, Literal, Boolean, Option, Float, Tuple]
             );
             let ty = self.inner.as_ref().unwrap().ty.to_string();
-            vec![quote! {
+            quote! {
                 match &#field_name {
                     Some(opt) => {
-                        #(
-                            #inner_validation
-                        )*
+                        #inner_validation
                     }
                     None => return Err(
                         RodValidateError::Option(
@@ -93,7 +89,7 @@ impl GetValidations for RodOptionContent {
                         )
                     )
                 }
-            }.into()]
+            }
         }
     }
 }

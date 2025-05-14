@@ -1,6 +1,6 @@
 use proc_macro_error::abort;
-use syn::{parse::Parse, ExprRange, LitInt, Token};
-use quote::quote;
+use syn::{parse::Parse, ExprRange, Ident, LitInt, Token};
+use quote::{quote, ToTokens};
 
 macro_rules! check_already_used_attr {
     ($attr:ident, $span:expr) => {
@@ -32,7 +32,7 @@ impl Parse for LengthOrSize {
 }
 
 impl LengthOrSize {
-    pub(crate) fn validate_string(&self, field_name: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    pub(crate) fn validate_string(&self, field_name: &Ident) -> proc_macro2::TokenStream {
         match self {
             LengthOrSize::Exact(exact) => {
                 quote! {
@@ -50,22 +50,74 @@ impl LengthOrSize {
             }
         }
     }
-    pub(crate) fn validate_integer(&self, field_name: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    pub(crate) fn validate_integer(&self, field_name: &Ident) -> proc_macro2::TokenStream {
         match self {
             LengthOrSize::Exact(exact) => {
                 quote! {
                     if #field_name != #exact {
-                        return Err(RodValidateError::Integer(IntegerValidation::Size(#field_name.into(), format!("to be exactly {}", #exact))));
+                        return Err(RodValidateError::Integer(IntegerValidation::Size(#field_name.clone().into(), format!("to be exactly {}", #exact))));
                     }
                 }
             }
             LengthOrSize::Range(range) => {
                 quote! {
-                    if !(#range).contains(&#field_name) {
-                        return Err(RodValidateError::Integer(IntegerValidation::Size(#field_name.into(), format!("to be in the range {:?}", #range))));
+                    if !(#range).contains(#field_name) {
+                        return Err(RodValidateError::Integer(IntegerValidation::Size(#field_name.clone().into(), format!("to be in the range {:?}", #range))));
                     }
                 }
             }
+        }
+    }
+    pub(crate) fn validate_float(&self, field_name: &Ident) -> proc_macro2::TokenStream {
+        match self {
+            LengthOrSize::Exact(exact) => {
+                quote! {
+                    if #field_name != #exact as f64 {
+                        return Err(RodValidateError::Float(FloatValidation::Size(#field_name.clone().into(), format!("to be exactly {}", #exact))));
+                    }
+                }
+            }
+            LengthOrSize::Range(range) => {
+                quote! {
+                    if !(#range).contains(#field_name) {
+                        return Err(RodValidateError::Float(FloatValidation::Size(#field_name.clone().into(), format!("to be in the range {:?}", #range))));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `IntegerSign` is an enum that represents the sign of an integer.
+/// It is used to specify whether the integer should be positive, negative, nonpositive, or nonnegative.
+pub(crate) enum NumberSign {
+    Positive,
+    Negative,
+    Nonpositive,
+    Nonnegative,
+}
+
+impl ToTokens for NumberSign {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let ident = match self {
+            NumberSign::Positive => "Positive",
+            NumberSign::Negative => "Negative",
+            NumberSign::Nonpositive => "Nonpositive",
+            NumberSign::Nonnegative => "Nonnegative",
+        };
+        tokens.extend(quote!(#ident));
+    }
+}
+
+impl Parse for NumberSign {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let ident: syn::Ident = input.parse()?;
+        match ident.to_string().as_str() {
+            "Positive" => Ok(NumberSign::Positive),
+            "Negative" => Ok(NumberSign::Negative),
+            "Nonpositive" => Ok(NumberSign::Nonpositive),
+            "Nonnegative" => Ok(NumberSign::Nonnegative),
+            _ => Err(input.error("Expected `sign` to be one of Positive, Negative, Nonpositive, Nonnegative")),
         }
     }
 }
@@ -84,3 +136,9 @@ pub use boolean::RodBooleanContent;
 
 mod option;
 pub use option::RodOptionContent;
+
+mod float;
+pub use float::RodFloatContent;
+
+mod tuple;
+pub use tuple::RodTupleContent;

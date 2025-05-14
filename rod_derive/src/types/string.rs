@@ -7,7 +7,6 @@ use syn::{parse::Parse, LitStr};
 #[cfg(feature = "regex")]
 use syn::Ident;
 
-use crate::GetValidations;
 
 use super::LengthOrSize;
 
@@ -66,7 +65,10 @@ impl Parse for StringFormat {
                 "Ipv4" => Ok(StringFormat::Ipv4),
                 "Ipv6" => Ok(StringFormat::Ipv6),
                 "DateTime" => Ok(StringFormat::DateTime),
-                _ => abort!(ident.span(), "Expected `format` to be one of Email, Url, Uuid, Ipv4, Ipv6, DateTime or a regex string"),
+                _ => abort!(
+                    ident.span(), "Unknown string format `{}`", ident;
+                    help = "Valid string formats are: Email, Url, Uuid, Ipv4, Ipv6, DateTime, or a custom regex string literal.";
+                ),
             }
         } else {
             abort!(input.span(), "Expected identifier or string literal for attribute `format`");
@@ -117,16 +119,11 @@ pub struct RodStringContent {
     includes: Option<LitStr>,
 }
 
-impl GetValidations for RodStringContent {
-    fn get_validations(&self, field_name: proc_macro2::TokenStream) -> Vec<proc_macro2::TokenStream> {
-        let mut validations = Vec::with_capacity(4);
-        
-        if let Some(length) = &self.length {
-            validations.push(length.validate_string(field_name.clone()));
-        }
-
+impl RodStringContent {
+    pub(crate) fn get_validations(&self, field_name: &Ident) -> proc_macro2::TokenStream {
+        let length_opt = self.length.as_ref().map(|length| length.validate_string(field_name));
         #[cfg(feature = "regex")]
-        if let Some(format) = &self.format {
+        let format_opt = self.format.as_ref().map(|format| {
             let regex = match format {
                 StringFormat::Regex(lit_str) => lit_str.value(),
                 StringFormat::Email => String::from(regex_literals::EMAIL_REGEX),
@@ -136,39 +133,42 @@ impl GetValidations for RodStringContent {
                 StringFormat::Ipv6 => String::from(regex_literals::IPV6_REGEX),
                 StringFormat::DateTime => String::from(regex_literals::DATETIME_REGEX),
             };
-            validations.push(quote! {
+            quote! {
                 if !regex::Regex::new(#regex).unwrap().is_match(&#field_name) {
                     let name = String::from(&#field_name);
                     return Err(RodValidateError::String(StringValidation::Format(name, #format)));
                 }
-            });
-        }
-
-        if let Some(starts_with) = &self.starts_with {
-            validations.push(quote! {
+            }
+        });
+        let starts_with_opt = self.starts_with.as_ref().map(|starts_with| {
+            quote! {
                 if !#field_name.starts_with(#starts_with) {
-                    return Err(RodValidateError::String(StringValidation::StartsWith(#field_name.to_string(), #starts_with)));
+                    return Err(RodValidateError::String(StringValidation::StartsWith(#field_name.clone().into(), #starts_with.into())));
                 }
-            });
-        }
-
-        if let Some(ends_with) = &self.ends_with {
-            validations.push(quote! {
+            }
+        });
+        let ends_with_opt = self.ends_with.as_ref().map(|ends_with| {
+            quote! {
                 if !#field_name.ends_with(#ends_with) {
-                    return Err(RodValidateError::String(StringValidation::EndsWith(#field_name.to_string(), #ends_with)));
+                    return Err(RodValidateError::String(StringValidation::EndsWith(#field_name.clone().into(), #ends_with.into())));
                 }
-            });
-        }
-
-        if let Some(includes) = &self.includes {
-            validations.push(quote! {
+            }
+        });
+        let includes_opt = self.includes.as_ref().map(|includes| {
+            quote! {
                 if !#field_name.contains(#includes) {
-                    return Err(RodValidateError::String(StringValidation::Includes(#field_name.to_string(), #includes)));
+                    return Err(RodValidateError::String(StringValidation::Includes(#field_name.clone().into(), #includes.into())));
                 }
-            });
-        }
+            }
+        });
 
-        validations
+        quote! {
+            #length_opt
+            #format_opt
+            #starts_with_opt
+            #ends_with_opt
+            #includes_opt
+        }
     }
 }
 

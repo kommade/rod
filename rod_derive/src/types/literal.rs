@@ -1,8 +1,7 @@
 use proc_macro_error::abort;
-use syn::{parse::Parse, PatLit};
+use syn::{parse::Parse, Ident, PatLit};
 use quote::quote;
 
-use crate::GetValidations;
 
 /// `RodLiteralContent` is a struct that represents the content of a literal field in a Rod entity.
 /// It is used to parse and validate literal attributes in the `#[rod]` attribute macro.
@@ -63,13 +62,13 @@ impl Parse for RodLiteralContent {
     }
 }
 
-impl GetValidations for RodLiteralContent {
-    fn get_validations(&self, field_name: proc_macro2::TokenStream) -> Vec<proc_macro2::TokenStream> {
+impl RodLiteralContent {
+    pub(crate) fn get_validations(&self, field_name: &Ident) -> proc_macro2::TokenStream {
         let value = &self.value.lit;
-        vec![quote! {
-            if #field_name != #value {
+        quote! {
+            if #field_name.clone() != #value {
                 return Err(RodValidateError::Literal(LiteralValidation::Value(#field_name.to_string(), format!("to be {}", #value))));
             }
-        }]
+        }
     }
 }

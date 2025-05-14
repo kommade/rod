@@ -1,7 +1,7 @@
 use proc_macro_error::abort;
-use syn::parse::Parse;
+use syn::{parse::Parse, Ident};
+use quote::quote;
 
-use crate::GetValidations;
 
 /// `RodBooleanContent` is a struct that represents the content of a boolean field in a Rod entity.
 /// It is used to parse and validate boolean attributes in the `#[rod]` attribute macro.
@@ -21,8 +21,8 @@ impl Parse for RodBooleanContent {
     }
 }
 
-impl GetValidations for RodBooleanContent {
-    fn get_validations(&self, _field_name: proc_macro2::TokenStream) -> Vec<proc_macro2::TokenStream> {
-        vec![]
+impl RodBooleanContent {
+    pub(crate) fn get_validations(&self, _field_name: &Ident) -> proc_macro2::TokenStream {
+        quote! {}
     }
 }
