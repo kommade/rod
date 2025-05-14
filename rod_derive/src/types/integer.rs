@@ -14,7 +14,7 @@ use super::{LengthOrSize, NumberSign};
 /// - `step`: An optional attribute that specifies that the integer must be a multiple of this value.
 /// # Usage
 /// ```
-/// use rod_derive::RodValidate;
+/// use rod::prelude::*;
 /// 
 /// #[derive(RodValidate)]
 /// struct MyEntity {

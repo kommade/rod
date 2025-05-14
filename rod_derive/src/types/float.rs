@@ -44,30 +44,30 @@ impl ToTokens for FloatType {
     }
 }
 
-/// `RodFloatContent` is a struct that represents the content of an integer field in a Rod entity.
-/// It is used to parse and validate integer attributes in the `#[rod]` attribute macro.
-/// This struct includes optional fields for size, sign, and step, which are used in validation checks.
+/// `RodFloatContent` is a struct that represents the content of an float field in a Rod entity.
+/// It is used to parse and validate float attributes in the `#[rod]` attribute macro.
+/// This struct includes optional fields for size, sign, and type, which are used in validation checks.
 /// # Attributes
-/// - `size`: An optional attribute that specifies the a range for the integer to be in, or an exact value for the integer.
-/// - `sign`: An optional attribute that specifies the sign of the integer, see [`NumberSign`][crate::types::integer::NumberSign] enum.
-/// - `step`: An optional attribute that specifies that the integer must be a multiple of this value.
+/// - `size`: An optional attribute that specifies the a range for the float to be in, or an exact value for the float.
+/// - `sign`: An optional attribute that specifies the sign of the float, see [`NumberSign`][crate::types::NumberSign] enum.
+/// - `type`: An optional attribute that specifies the type of the float, see [`FloatType`][crate::types::float::FloatType] enum.
 /// # Usage
 /// ```
-/// use rod_derive::RodValidate;
+/// use rod::prelude::*;
 /// 
 /// #[derive(RodValidate)]
 /// struct MyEntity {
 ///    #[rod(
 ///         i32 {
-///             size: 1..=10, // or size: 6
+///             size: 1.0..=10.0, // or size: 6.0
 ///             sign: Positive,
-///             step: 2,
+///             type: Finite,
 ///         }
 ///     )]
-///     my_integer: i32,
+///     my_float: i32,
 /// }
 /// 
-/// let entity = MyEntity { my_integer: 6 };
+/// let entity = MyEntity { my_float: 6.0 };
 /// assert!(entity.validate().is_ok());
 /// ```
 pub struct RodFloatContent {

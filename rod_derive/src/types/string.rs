@@ -88,7 +88,7 @@ impl Parse for StringFormat {
 /// - `includes`: An optional attribute that specifies the string must include this value.
 /// # Usage
 /// ```
-/// use rod_derive::RodValidate;
+/// use rod::prelude::*;
 /// 
 /// #[derive(RodValidate)]
 /// struct MyEntity {

@@ -24,7 +24,7 @@ fn test_string_length() {
 }
 
 #[test]
-fn test_string_length_literals() {
+fn test_string_literals() {
     #[derive(RodValidate)]
     struct Test {
         #[rod(Literal {

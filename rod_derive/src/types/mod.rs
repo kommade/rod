@@ -12,6 +12,8 @@ macro_rules! check_already_used_attr {
     };
 }
 
+/// `LengthOrSize` is an enum that represents either an exact value or a range.
+/// It is used to specify the length (for strings) or size (for integers and floats) of a field.
 pub(crate) enum LengthOrSize {
     Exact(LitInt),
     Range(ExprRange),
@@ -88,7 +90,7 @@ impl LengthOrSize {
     }
 }
 
-/// `IntegerSign` is an enum that represents the sign of an integer.
+/// `NumberSign` is an enum that represents the sign of an integer.
 /// It is used to specify whether the integer should be positive, negative, nonpositive, or nonnegative.
 pub(crate) enum NumberSign {
     Positive,

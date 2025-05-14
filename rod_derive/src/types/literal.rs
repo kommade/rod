@@ -10,7 +10,7 @@ use quote::quote;
 /// - `value`: A required attribute that specifies the expected literal value of the field.
 /// # Usage
 /// ```
-/// use rod_derive::RodValidate;
+/// use rod::prelude::*;
 /// 
 /// #[derive(RodValidate)]
 /// struct MyEntity {

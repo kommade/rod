@@ -394,7 +394,7 @@ macro_rules! get_field_validations {
 /// # Examples
 /// 
 /// ```
-/// use rod_derive::RodValidate;
+/// use rod::prelude::*;
 ///
 /// #[derive(RodValidate)]
 /// struct User {
@@ -419,7 +419,7 @@ macro_rules! get_field_validations {
 /// This example demonstrates a struct that does not implement `RodValidate`.
 /// 
 /// ```compile_fail
-/// use rod_derive::RodValidate;
+/// use rod::prelude::*;
 ///
 /// struct DoesNotImplementRodValidate {
 ///     field: String,
