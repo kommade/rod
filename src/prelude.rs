@@ -121,4 +121,22 @@ pub use crate::RodValidate;
 ///     field: (i32, (i32, i32)),
 /// }
 /// ```
+/// 
+/// Reference to a reference
+/// 
+/// ```compile_fail
+/// use rod::prelude::*;
+/// 
+/// #[derive(RodValidate)]
+/// struct Test {
+///    #[rod(
+///        i32 {
+///            size: 6..=8,
+///            sign: Positive,
+///            step: 2,
+///        }
+///    )]
+///    field: &'static &'static i32, // This will fail to compile
+/// }
+/// ```
 pub use rod_derive::RodValidate;

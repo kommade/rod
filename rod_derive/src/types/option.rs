@@ -75,7 +75,7 @@ impl RodOptionContent {
             let inner_validation = rod_content_match!(
                 &self.inner.as_ref().unwrap().content,
                 &format_ident!("opt"),
-                [String, Integer, Literal, Boolean, Option, Float, Tuple]
+                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom]
             );
             let ty = self.inner.as_ref().unwrap().ty.to_string();
             quote! {

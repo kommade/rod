@@ -289,3 +289,118 @@ fn test_tuple_nested() {
     };
     assert!(test.validate().is_err(), "{}", test.validate().unwrap_err());
 }
+
+#[test]
+fn test_tuple_struct() {
+    #[derive(RodValidate)]
+    struct InsideTuple {
+        #[rod(
+            i32 {
+                size: 6..8,
+                sign: Positive,
+                step: 2,
+            }
+        )]
+        field: i32,
+    }
+    #[derive(RodValidate)]
+    struct Test {
+        #[rod(
+            Tuple {
+                InsideTuple,
+                i32 {
+                    size: 6..=8,
+                    sign: Positive,
+                    step: 2,
+                }
+            }
+        )]
+        field: (InsideTuple, i32),
+        #[rod(skip)]
+        other_field: i32,
+    }
+    let test = Test {
+        field: (InsideTuple { field: 6 }, 8),
+        other_field: 10,
+    };
+    assert!(test.validate().is_ok(), "{}", test.validate().unwrap_err());
+    let test = Test {
+        field: (InsideTuple { field: 5 }, 8),
+        other_field: 10,
+    };
+    assert!(test.validate().is_err(), "{}", test.validate().unwrap_err());
+}
+
+// #[test]
+// fn test_inside_fn_ptr() {
+//     #[derive(RodValidate)]
+//     struct Test {
+//         #[rod(
+//             i32 {
+//                 size: 6..8,
+//                 sign: Positive,
+//                 step: 2,
+//             }
+//         )]
+//         field: fn(i32) -> i32,
+//     }
+// }
+
+#[test]
+fn test_struct_with_reference() {
+    #[derive(RodValidate)]
+    struct Test {
+        #[rod(
+            i32 {
+                size: 6..8,
+                sign: Positive,
+                step: 2,
+            }
+        )]
+        field: i32,
+        #[rod(
+            str {
+                length: 5,
+            }
+        )]
+        other_field: &'static str,
+    }
+    let test = Test {
+        field: 6,
+        other_field: "12345",
+    };
+    assert!(test.validate().is_ok(), "{}", test.validate().unwrap_err());
+    let test = Test {
+        field: 5,
+        other_field: "1234",
+    };
+    assert!(test.validate().is_err(), "{}", test.validate().unwrap_err());
+}
+
+#[test]
+fn test_enum_with_reference() {
+    #[derive(RodValidate)]
+    enum TestEnum {
+        First,
+        Second(
+            #[rod(
+                i32 {
+                    size: 6..8,
+                    sign: Positive,
+                    step: 2,
+                }
+            )]
+            i32,
+            #[rod(
+                str {
+                    length: 5,
+                }
+            )]
+            &'static str,
+        ),
+    }
+    let test = TestEnum::Second(6, "12345");
+    assert!(test.validate().is_ok(), "{}", test.validate().unwrap_err());
+    let test = TestEnum::Second(5, "1234");
+    assert!(test.validate().is_err(), "{}", test.validate().unwrap_err());
+}

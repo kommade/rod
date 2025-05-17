@@ -3,15 +3,15 @@
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
-use proc_macro_error::{abort, proc_macro_error};
+use proc_macro_error::{abort, emit_warning, proc_macro_error};
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{
     braced, parse_macro_input, Data, DeriveInput, Fields, Ident, Result as SynResult, Type, TypeTuple
 };
-use quote::{format_ident, quote};
+use quote::quote;
 mod types;
-use types::{RodBooleanContent, RodFloatContent, RodIntegerContent, RodLiteralContent, RodOptionContent, RodStringContent, RodTupleContent};
+use types::{CustomContent, RodBooleanContent, RodFloatContent, RodIntegerContent, RodLiteralContent, RodOptionContent, RodSkipContent, RodStringContent, RodTupleContent};
 
 #[derive(Debug, Clone, PartialEq)]
 enum TypeEnum {
@@ -34,6 +34,26 @@ fn get_type(ty: &Type) -> Option<TypeEnum> {
         Type::Reference(type_ref) => get_type(type_ref.elem.as_ref()),
         Type::Tuple(tuple) => Some(TypeEnum::Tuple(tuple.clone())),
         _ => None,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum IsNestedReference {
+    None,
+    Single,
+    More,
+}
+
+fn type_is_nested_reference(ty: &Type) -> IsNestedReference {
+    match ty {
+        Type::Reference(type_ref) => {
+            if let Type::Reference(_) = type_ref.elem.as_ref() {
+                IsNestedReference::More
+            } else {
+                IsNestedReference::Single
+            }
+        }
+        _ => IsNestedReference::None,
     }
 }
 
@@ -62,7 +82,9 @@ fn recurse_type_path(ty: &Type, level: usize) -> Option<(RodAttrType, usize)> {
                     }
                 }
             } else {
-                return Some((ty.into(), level));
+                debug_assert!(<&syn::Type as TryInto<RodAttrType>>::try_into(ty).is_ok(), "Expected a valid rod type, but found: {:?}", ty);
+                let attr_ty = ty.try_into().ok()?;
+                return Some((attr_ty, level));
             }
         }
     }
@@ -99,6 +121,11 @@ fn recurse_tuple(ty: &Type, level: usize) -> Option<Vec<(RodAttrType, usize)>> {
                 Type::Path(_) => {
                     let (ty, _) = recurse_type_path(elem, 0).unwrap();
                     types.push((ty, level));
+                }
+                Type::Reference(type_ref) => {
+                    if let Some((ty, _)) = recurse_type_path(&type_ref.elem, 0) {
+                        types.push((ty, level));
+                    }
                 }
                 _ => panic!("Unexpected type in tuple: {:?}", elem),
             }
@@ -154,6 +181,7 @@ macro_rules! assert_type {
             RodAttrType::Tuple(_) => {
                 let inner_ty_array = recurse_rod_attr_tuple(&$expected, 0);
                 let inner_actual_ty_array = recurse_tuple($ty, 0);
+                debug_assert!(inner_ty_array.is_some() && inner_actual_ty_array.is_some(), "Expected a tuple type, but found: {:?}", $ty);
                 if inner_ty_array != inner_actual_ty_array {
                     let (i, j) = diff_tuple_array(inner_ty_array.as_ref().unwrap(), inner_actual_ty_array.as_ref().unwrap());
                     abort!(
@@ -169,6 +197,9 @@ macro_rules! assert_type {
                     );
                 }
             }
+            RodAttrType::Skip(_) => {
+                // ignore
+            }
             _ => {
                 let actual_type: RodAttrType = $ty.into();
                 if actual_type != $expected.ty && !matches!($expected.ty, RodAttrType::Literal(_)) {
@@ -182,18 +213,6 @@ macro_rules! assert_type {
         }
 
     };
-}
-
-struct RodNone;
-
-impl Parse for RodNone {
-    fn parse(input: ParseStream) -> SynResult<Self> {
-        let none: Ident = input.parse()?;
-        if none != "none" {
-            return Err(input.error("Expected `none`"));
-        }
-        Ok(RodNone)
-    }
 }
 
 struct RodAttr {
@@ -211,11 +230,25 @@ macro_rules! impl_rod_types {
             }
         ),* $(,)?
     ) => {
-        #[derive(Debug, PartialEq, Clone)]
+        #[derive(Debug, Clone)]
         enum RodAttrType {
             $(
                 $variant(TypeEnum),
             )*
+        }
+
+        impl PartialEq for RodAttrType {
+            fn eq(&self, other: &Self) -> bool {
+                #[allow(unreachable_patterns)]
+                match (self, other) {
+                    (RodAttrType::Skip(_), _) => true,
+                    (_, RodAttrType::Skip(_)) => true,
+                    $(
+                        (RodAttrType::$variant(ident1), RodAttrType::$variant(ident2)) => ident1 == ident2,
+                    )*
+                    _ => false,
+                }
+            }
         }
 
         impl std::fmt::Display for RodAttrType {
@@ -229,10 +262,15 @@ macro_rules! impl_rod_types {
         }
 
         impl From<Type> for RodAttrType {
-            fn from(ty: Type) -> RodAttrType {
+            fn from(ty: Type) -> Self {
                 let type_ident = get_type(&ty).unwrap_or_else(|| {
+                    #[cfg(debug_assertions)]
                     abort!(
-                        ty.span(), "Expected a type path, but found: {:?}", ty
+                        ty.span(), "Expected a type path, reference or tuple, but found: {:?}", ty
+                    );
+                    #[cfg(not(debug_assertions))]
+                    abort!(
+                        ty.span(), "Unsupported type",
                     );
                 });
                 let type_str = type_ident.to_string();
@@ -241,17 +279,20 @@ macro_rules! impl_rod_types {
                         return RodAttrType::$variant(type_ident.clone());
                     }
                 )*
-                abort!(
-                    ty.span(), "Unsupported type: {}", type_ident
-                );
+                return RodAttrType::Custom(type_ident);
             }
         }
 
         impl From<&Type> for RodAttrType {
-            fn from(ty: &Type) -> RodAttrType {
+            fn from(ty: &Type) -> Self {
                 let type_ident = get_type(ty).unwrap_or_else(|| {
+                    #[cfg(debug_assertions)]
                     abort!(
-                        ty.span(), "Expected a type path, but found: {:?}", ty
+                        ty.span(), "Expected a type path, reference or tuple, but found: {:?}", ty
+                    );
+                    #[cfg(not(debug_assertions))]
+                    abort!(
+                        ty.span(), "Unsupported type",
                     );
                 });
                 let type_str = type_ident.to_string();
@@ -260,9 +301,7 @@ macro_rules! impl_rod_types {
                         return RodAttrType::$variant(type_ident.clone());
                     }
                 )*
-                abort!(
-                    ty.span(), "Unsupported type: {}", type_ident
-                );
+                return RodAttrType::Custom(type_ident);
             }
         }
 
@@ -271,6 +310,15 @@ macro_rules! impl_rod_types {
                 match self {
                     $(
                         RodAttrType::$variant(ident) => ident,
+                    )*
+                }
+            }
+            fn type_is_valid_rod_type(ty: &Type) -> bool {
+                #[allow(unreachable_patterns)]
+                match ty.into() {
+                    RodAttrType::Skip(_) | RodAttrType::Custom(_) => false,
+                    $(
+                        RodAttrType::$variant(_) => true,
                     )*
                 }
             }
@@ -287,10 +335,19 @@ macro_rules! impl_rod_types {
                 let ty: Type = input.parse()?;
                 let rod_type: RodAttrType = ty.into();
                 let inner;
-                braced!(inner in input);
+                #[allow(unreachable_patterns)]
                 let content = match rod_type {
+                    RodAttrType::Skip(_) => {
+                        let skip: RodSkipContent = input.parse()?;
+                        RodAttrContent::Skip(skip)
+                    }
+                    RodAttrType::Custom(_) => {
+                        let content: CustomContent = input.parse()?;
+                        RodAttrContent::Custom(content)
+                    }
                     $(
                         RodAttrType::$variant(_) => {
+                            braced!(inner in input);
                             let content: $content_ty = inner.parse()?;
                             RodAttrContent::$variant(content)
                         }
@@ -338,6 +395,16 @@ impl_rod_types! {
         content: RodTupleContent,
         match: ["Tuple"]
     },
+    Skip {
+        ident: Ident,
+        content: RodSkipContent,
+        match: ["Skip", "skip"]
+    },
+    Custom {
+        ident: Ident,
+        content: CustomContent,
+        match: []
+    },
 }
 
 macro_rules! rod_content_match {
@@ -350,23 +417,20 @@ macro_rules! rod_content_match {
     };
 }
 
-macro_rules! get_field_validations {
+macro_rules!  get_field_validations {
     (
         $field_access:expr,
         $field:expr,
     ) => {
         $field.attrs.iter().filter_map(|attr| {
             if attr.path().is_ident("rod") {
-                if attr.parse_args::<RodNone>().is_ok() {
-                    return None;
-                }
                 match attr.parse_args::<RodAttr>() {
                     Ok(rod_attr) => {
                         assert_type!($field_access, &$field.ty, rod_attr);
                         let validations_for_field = rod_content_match!(
                             rod_attr.content,
                             $field_access,
-                            [String, Integer, Literal, Boolean, Option, Float, Tuple]
+                            [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom]
                         );
                         Some(quote! {
                             #validations_for_field
@@ -382,6 +446,21 @@ macro_rules! get_field_validations {
                 None
             }
         })
+    };
+}
+
+macro_rules! check_valid_rod_type {
+    ($ty:expr, $span:expr, $field_name:expr) => {
+        if RodAttrType::type_is_valid_rod_type(&$ty) {
+            let valid_type = get_type(&$ty).unwrap();
+            emit_warning!(
+                $span,
+                "Field `{}` has no `#[rod(...)]` attribute, however it is of type `{}` which is a valid Rod type.",
+                $field_name.as_ref().unwrap(), valid_type;
+                help = "If you want to validate this field, add a `#[rod({}{{...}})]` attribute to it.\nIf you want to skip validation, use `#[rod(Skip)]`.",
+                valid_type
+            )
+        }
     };
 }
 
@@ -447,21 +526,39 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
             if let Fields::Named(fields_named) = &data_struct.fields {
                 fields_named.named.iter().map(|field| {
                     let field_name = &field.ident;
+                    // If no attributes are present, we assume it's a custom type that implements `RodValidate`
+                    // If a custom type appears inside a Rod type, it has to be explicitly annotated with `#[rod(...CustomType...)]`
+                    // The name of the custom type and the annotation must match
+                    // Otherwise, the custom type can just have no #rod attribute
                     if field.attrs.is_empty() {
+                        check_valid_rod_type!(field.ty, field.ty.span(), field_name);
                         quote! {
-                            fn assert_impl_rod_validate<T: RodValidate>(value: &T) -> Result<(), RodValidateError> {
-                                value.validate()
-                            }
-                            assert_impl_rod_validate(field_name)?;
+                            let #field_name = &self.#field_name;
+                            assert_impl_rod_validate(#field_name)?;
                         }
                     } else {
                         let validations: proc_macro2::TokenStream = get_field_validations!(
                             field_name.as_ref().unwrap(),
                             field,
                         ).collect();
-                        quote! {
-                            let #field_name = &self.#field_name;
-                            #validations
+                        match type_is_nested_reference(&field.ty) {
+                            IsNestedReference::None => quote! {
+                                let #field_name = &self.#field_name;
+                                #validations
+                            },
+                            IsNestedReference::Single => quote! {
+                                let #field_name = self.#field_name;
+                                #validations
+                            },
+                            IsNestedReference::More => {
+                                // If the field is a reference to a reference, we cannot validate it directly
+                                // because it would require dereferencing, which would require the type to be `Copy` or `Deref`.
+                                // Maybe we should allow this in the future, but for now we just abort.
+                                abort!(
+                                    field.ty.span(), "Field `{}` is a reference to a reference, which is not supported.", field_name.as_ref().unwrap();
+                                    help = "Use a single reference instead, e.g. `&T` instead of `&&T`."
+                                )
+                            }
                         }
                     }
                 }).collect()
@@ -477,11 +574,15 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
                         let field_names = fields_named.named.iter().map(|f| f.ident.clone());
                         let validations_iter = fields_named.named.iter().map(|field| {
                             let field_name = &field.ident;
+                            if type_is_nested_reference(&field.ty) == IsNestedReference::More {
+                                abort!(
+                                    field.ty.span(), "Field `{}` is a reference to a reference, which is not supported.", field_name.as_ref().unwrap();
+                                    help = "Use a single reference instead, e.g. `&T` instead of `&&T`."
+                                )
+                            }
                             if field.attrs.is_empty() {
+                                check_valid_rod_type!(field.ty, field.ty.span(), field_name);
                                 quote! {
-                                    fn assert_impl_rod_validate<T: RodValidate>(value: &T) -> Result<(), RodValidateError> {
-                                        value.validate()
-                                    }
                                     assert_impl_rod_validate(#field_name)?;
                                 }
                             } else {
@@ -503,17 +604,21 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
                             .map(|i| syn::Ident::new(&format!("field_{}", i), proc_macro2::Span::call_site()))
                             .collect();
                         let validations_iter = fields_unnamed.unnamed.iter().enumerate().map(|(idx, field)| {
-                            let field_ident = &field_idents[idx];
+                            let field_ident = field_idents.get(idx);
+                            if type_is_nested_reference(&field.ty) == IsNestedReference::More {
+                                abort!(
+                                    field.ty.span(), "Field {} of variant `{}` is a reference to a reference, which is not supported.", idx, variant.ident;
+                                    help = "Use a single reference instead, e.g. `&T` instead of `&&T`."
+                                )
+                            }
                             if field.attrs.is_empty() {
+                                check_valid_rod_type!(field.ty, field.ty.span(), field_ident);
                                 quote! {
-                                    fn assert_impl_rod_validate<T: RodValidate>(value: &T) -> Result<(), RodValidateError> {
-                                        value.validate()
-                                    }
                                     assert_impl_rod_validate(#field_ident)?;
                                 }
                             } else {
                                 get_field_validations!(
-                                    field_ident,
+                                    field_ident.as_ref().unwrap(),
                                     field,
                                 ).collect()
                             }
@@ -545,6 +650,9 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
     quote! {
         impl RodValidate for #name {
             fn validate(&self) -> Result<(), RodValidateError> {
+                fn assert_impl_rod_validate<T: RodValidate>(value: &T) -> Result<(), RodValidateError> {
+                    value.validate()
+                }
                 #validations
                 Ok(())
             }
