@@ -152,9 +152,44 @@ fn diff_tuple_array(
     (expected[i].clone(), actual[j].clone())
 }
 
+fn recurse_iterable(
+    input: &RodAttr,
+    level: usize
+) -> Option<(RodAttrType, usize)> {
+    match &input.content {
+        RodAttrContent::Iterable(content) => {
+            recurse_iterable(content.item.as_ref(), level + 1)
+        }
+        _ => Some((input.ty.clone(), level)),
+    }
+}
+
 macro_rules! assert_type {
     ($name:expr, $ty:expr, $expected:expr) => {
         match $expected.ty {
+            RodAttrType::Iterable(_) => {
+                let item_type = recurse_iterable(&$expected, 0);
+                let item_actual_type = recurse_type_path($ty, 0);
+                if item_type.is_some() && item_type != item_actual_type {
+                    if let Some((item_type, level)) = item_type {
+                        if let Some((item_actual_type, actual_level)) = item_actual_type {
+                            if level != actual_level {
+                                abort!(
+                                    $name.span(), "Expected `{}` to be a {}-nested Iterable, but found {}-nested Iterable",
+                                    $name, level, actual_level;
+                                    help = "Make sure the nesting levels match in the attribute and the type";
+                                );
+                            } else {
+                                abort!(
+                                    $name.span(), "Expected `{}` to be a {} type, but found {}",
+                                    $name, item_type, item_actual_type;
+                                    help = "Try using {} instead of {}", item_type.inner_type(), get_type($ty).unwrap()
+                                );
+                            }
+                        }
+                    }
+                }
+            },
             RodAttrType::Option(_) => {
                 let inner_type = recurse_rod_attr_opt(&$expected, 0);
                 let inner_actual_type = recurse_type_path($ty, 0);
@@ -405,6 +440,11 @@ impl_rod_types! {
         content: CustomContent,
         match: []
     },
+    Iterable {
+        ident: Ident,
+        content: types::RodIterableContent,
+        match: ["Iterable"]
+    },
 }
 
 macro_rules! rod_content_match {
@@ -430,7 +470,7 @@ macro_rules!  get_field_validations {
                         let validations_for_field = rod_content_match!(
                             rod_attr.content,
                             $field_access,
-                            [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom]
+                            [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
                         );
                         Some(quote! {
                             #validations_for_field

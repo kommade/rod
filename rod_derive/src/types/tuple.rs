@@ -33,7 +33,7 @@ impl RodTupleContent {
             let inner_validation = rod_content_match!(
                 &field.content,
                 &subfield_name,
-                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom]
+                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
             );
             quote! {
                 let #subfield_name = &#field_name.#i;

@@ -39,4 +39,5 @@ rod_validation_types! {
     literal, Literal, LiteralValidation,
     option, Option, OptionValidation,
     float, Float, FloatValidation,
+    iterable, Iterable, IterableValidation,
 }

@@ -88,6 +88,24 @@ impl LengthOrSize {
             }
         }
     }
+    pub(crate) fn validate_iterable(&self, field_name: &Ident) -> proc_macro2::TokenStream {
+        match self {
+            LengthOrSize::Exact(exact) => {
+                quote! {
+                    if #field_name.len() != #exact {
+                        return Err(RodValidateError::Iterable(IterableValidation::Length(#field_name.to_string(), format!("to be exactly {}", #exact))));
+                    }
+                }
+            }
+            LengthOrSize::Range(range) => {
+                quote! {
+                    if !(#range).contains(&#field_name.len()) {
+                        return Err(RodValidateError::Iterable(IterableValidation::Length(#field_name.to_string(), format!("to be in the range {:?}", #range))));
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// `NumberSign` is an enum that represents the sign of an integer.
@@ -150,3 +168,6 @@ pub use skip::RodSkipContent;
 
 mod custom;
 pub use custom::CustomContent;
+
+mod iterable;
+pub use iterable::RodIterableContent;

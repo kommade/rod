@@ -404,3 +404,27 @@ fn test_enum_with_reference() {
     let test = TestEnum::Second(5, "1234");
     assert!(test.validate().is_err(), "{}", test.validate().unwrap_err());
 }
+
+fn test_iterable() {
+    #[derive(RodValidate)]
+    struct Test {
+        #[rod(
+            Iterable {
+                item: i32 {
+                    size: 6..=8,
+                    sign: Positive,
+                    step: 2,
+                }
+            }
+        )]
+        field: Vec<i32>,
+    }
+    let test = Test {
+        field: vec![6, 8],
+    };
+    assert!(test.validate().is_ok(), "{}", test.validate().unwrap_err());
+    let test = Test {
+        field: vec![5, 7],
+    };
+    assert!(test.validate().is_err(), "{}", test.validate().unwrap_err());
+}
