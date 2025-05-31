@@ -1,5 +1,3 @@
-#![feature(iter_order_by)]
-
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
@@ -7,7 +5,7 @@ use proc_macro_error::{abort, emit_warning, proc_macro_error};
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{
-    braced, parse_macro_input, Data, DeriveInput, Fields, Ident, Result as SynResult, Type, TypeTuple
+    parse_macro_input, Data, DeriveInput, ExprClosure, Fields, Ident, Result as SynResult, Type, TypeTuple
 };
 use quote::quote;
 mod types;
@@ -250,9 +248,57 @@ macro_rules! assert_type {
     };
 }
 
+enum RodExpr {
+    Attribute(RodAttr),
+    Check(RodCheck),
+}
+
+impl Parse for RodExpr {
+    fn parse(input: ParseStream) -> SynResult<Self> {
+        if input.peek(Ident) && input.peek2(syn::Token![=]) {
+            let rod_check: RodCheck = input.parse()?;
+            Ok(RodExpr::Check(rod_check))
+        } else {
+            let rod_attr: RodAttr = input.parse()?;
+            Ok(RodExpr::Attribute(rod_attr))
+        }
+    }
+}
+
 struct RodAttr {
     ty: RodAttrType,
     content: RodAttrContent,
+    span: proc_macro2::Span,
+}
+
+struct RodCheck{
+    closure: ExprClosure,
+    span: proc_macro2::Span,
+}
+
+impl Parse for RodCheck {
+    fn parse(input: ParseStream) -> SynResult<Self> {
+        let ident = input.parse::<Ident>()?;
+        if ident != "check" {
+            abort!(
+                ident.span(), "Unknown attribute `{}`. Expected `check`", ident
+            )
+        }
+        input.parse::<syn::Token![=]>()?;
+        let expr: ExprClosure = input.parse()?;
+        let span = ident.span().join(expr.span()).unwrap_or_else(|| proc_macro2::Span::call_site());
+        if expr.inputs.len() != 1 {
+            abort!(
+                expr.span(), "Expected a single argument for `check` closure, but found {} arguments",
+                expr.inputs.len();
+                help = "Make sure the closure has exactly one argument"
+            );
+        }
+        Ok(RodCheck {
+            closure: expr,
+            span,
+        })
+    }
 }
 
 macro_rules! impl_rod_types {
@@ -368,8 +414,8 @@ macro_rules! impl_rod_types {
         impl Parse for RodAttr {
             fn parse(input: ParseStream) -> SynResult<Self> {
                 let ty: Type = input.parse()?;
+                let span = ty.span();
                 let rod_type: RodAttrType = ty.into();
-                let inner;
                 #[allow(unreachable_patterns)]
                 let content = match rod_type {
                     RodAttrType::Skip(_) => {
@@ -382,13 +428,12 @@ macro_rules! impl_rod_types {
                     }
                     $(
                         RodAttrType::$variant(_) => {
-                            braced!(inner in input);
-                            let content: $content_ty = inner.parse()?;
+                            let content: $content_ty = input.parse()?;
                             RodAttrContent::$variant(content)
                         }
                     ),*
                 };
-                Ok(RodAttr { ty: rod_type, content })
+                Ok(RodAttr { ty: rod_type, content, span })
             }
         }
     }
@@ -448,10 +493,10 @@ impl_rod_types! {
 }
 
 macro_rules! rod_content_match {
-    ($content:expr, $field_access:expr, [ $( $variant:ident ),* ]) => {
+    ($content:expr, $field_access:expr, $wrap_return:expr, [ $( $variant:ident ),* ]) => {
         match $content {
             $(
-                RodAttrContent::$variant(ref content) => content.get_validations($field_access),
+                RodAttrContent::$variant(content) => content.get_validations($field_access, $wrap_return),
             )*
         }
     };
@@ -461,24 +506,88 @@ macro_rules!  get_field_validations {
     (
         $field_access:expr,
         $field:expr,
+        $wrap_return:expr
     ) => {
         $field.attrs.iter().filter_map(|attr| {
             if attr.path().is_ident("rod") {
-                match attr.parse_args::<RodAttr>() {
-                    Ok(rod_attr) => {
+                let mut check_opt = None;
+                let mut rod_attr_opt = None;
+                match attr.parse_args_with(syn::punctuated::Punctuated::<RodExpr, syn::Token![,]>::parse_terminated) {
+                    Ok(exprlist) => {
+                        for expr in exprlist {
+                            match expr {
+                                RodExpr::Check(check) => {
+                                    if check_opt.is_some() {
+                                        abort!(
+                                            check.span, "Multiple `check` attributes found on field `{}`", $field_access;
+                                            help = "Remove the extra `check` attributes"
+                                        );
+                                    }
+                                    check_opt = Some(check);
+                                }
+                                RodExpr::Attribute(rod_attr) => {
+                                    if rod_attr_opt.is_some() {
+                                        abort!(
+                                            rod_attr.span, "Multiple type attributes found on field `{}`", $field_access;
+                                            help = "Remove the extra attributes"
+                                        );
+                                    }
+                                    rod_attr_opt = Some(rod_attr);
+                                }
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        abort!(
+                            attr.span(), "Failed to parse attribute: {}", e
+                        );
+                    }
+                }
+                match rod_attr_opt {
+                    Some(rod_attr) => {
                         assert_type!($field_access, &$field.ty, rod_attr);
                         let validations_for_field = rod_content_match!(
                             rod_attr.content,
                             $field_access,
+                            $wrap_return,
                             [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
                         );
+                        let check = check_opt.map_or_else(|| quote! {}, |check| {
+                            if matches!(rod_attr.ty, RodAttrType::Skip(_)) {
+                                abort!(
+                                    check.span, "Cannot use `check` with `skip` attribute on field `{}`", $field_access;
+                                    help = "Remove the `check` attribute"
+                                );
+                            }
+                            let closure = &check.closure;
+                            let ty = &$field.ty;
+                            let field_type = match type_is_nested_reference(ty) {
+                                IsNestedReference::None => quote! {
+                                    &#ty
+                                },
+                                IsNestedReference::Single => quote! {
+                                    #ty
+                                },
+                                IsNestedReference::More => unreachable!(), // This should have been caught earlier
+                            };
+                            let path = $field_access.to_string();
+                            let ret = $wrap_return(quote! { RodValidateError::CheckFailed(#path) });
+                            let field_access = $field_access;
+                            quote! {
+                                let check: fn(#field_type) -> bool = #closure;
+                                if !check(#field_access) {
+                                    #ret;
+                                }
+                            }
+                        });
                         Some(quote! {
+                            #check
                             #validations_for_field
                         })
                     }
-                    Err(e) => {
+                    None => {
                         abort!(
-                            attr.span(), "Failed to parse attribute: {}", e
+                            attr.span(), "Failed to parse attribute",
                         );
                     }
                 }
@@ -555,146 +664,220 @@ macro_rules! check_valid_rod_type {
 ///     field2: DoesNotImplementRodValidate, // This field does not implement RodValidate
 /// }
 /// ```
+/// # Custom Validations
+/// You can also define custom validations using the `check` attribute. Use a closure to define the validation logic.
+/// The closure should take a single argument, which is the field value, and return a boolean indicating whether the validation passed or failed.
+/// ```
+/// use rod::prelude::*;
+/// #[derive(RodValidate)]
+/// struct MyEntity {
+///    #[rod(
+///        String {
+///            length: 5..=10,
+///        },
+///        check = |s| {
+///           s.chars().all(|c| c.is_alphanumeric())
+///        }
+///     )]
+///     my_string: String,
+/// }
+/// let entity = MyEntity {
+///     my_string: "Hello123".to_string(),
+/// };
+/// assert!(entity.validate().is_ok());
+/// ```
 #[proc_macro_error]
 #[proc_macro_derive(RodValidate, attributes(rod))]
 pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let name = &ast.ident;
 
-    let validations: proc_macro2::TokenStream = match &ast.data {
-        Data::Struct(data_struct) => {
-            if let Fields::Named(fields_named) = &data_struct.fields {
-                fields_named.named.iter().map(|field| {
-                    let field_name = &field.ident;
-                    // If no attributes are present, we assume it's a custom type that implements `RodValidate`
-                    // If a custom type appears inside a Rod type, it has to be explicitly annotated with `#[rod(...CustomType...)]`
-                    // The name of the custom type and the annotation must match
-                    // Otherwise, the custom type can just have no #rod attribute
-                    if field.attrs.is_empty() {
-                        check_valid_rod_type!(field.ty, field.ty.span(), field_name);
-                        quote! {
-                            let #field_name = &self.#field_name;
-                            assert_impl_rod_validate(#field_name)?;
-                        }
-                    } else {
-                        let validations: proc_macro2::TokenStream = get_field_validations!(
-                            field_name.as_ref().unwrap(),
-                            field,
-                        ).collect();
-                        match type_is_nested_reference(&field.ty) {
-                            IsNestedReference::None => quote! {
+    let get_validations = |wrap_validations: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream| -> proc_macro2::TokenStream {
+        match &ast.data {
+            Data::Struct(data_struct) => {
+                if let Fields::Named(fields_named) = &data_struct.fields {
+                    fields_named.named.iter().map(|field| {
+                        let field_name = &field.ident;
+                        // If no attributes are present, we assume it's a custom type that implements `RodValidate`
+                        // If a custom type appears inside a Rod type, it has to be explicitly annotated with `#[rod(...CustomType...)]`
+                        // The name of the custom type and the annotation must match
+                        // Otherwise, the custom type can just have no #rod attribute
+                        if field.attrs.is_empty() {
+                            check_valid_rod_type!(field.ty, field.ty.span(), field_name);
+                            let ret = wrap_validations(quote! { e });
+                            quote! {
                                 let #field_name = &self.#field_name;
-                                #validations
-                            },
-                            IsNestedReference::Single => quote! {
-                                let #field_name = self.#field_name;
-                                #validations
-                            },
-                            IsNestedReference::More => {
-                                // If the field is a reference to a reference, we cannot validate it directly
-                                // because it would require dereferencing, which would require the type to be `Copy` or `Deref`.
-                                // Maybe we should allow this in the future, but for now we just abort.
-                                abort!(
-                                    field.ty.span(), "Field `{}` is a reference to a reference, which is not supported.", field_name.as_ref().unwrap();
-                                    help = "Use a single reference instead, e.g. `&T` instead of `&&T`."
-                                )
-                            }
-                        }
-                    }
-                }).collect()
-            } else {
-                unreachable!()
-            }
-        },
-        Data::Enum(data_enum) => {
-            let match_arms = data_enum.variants.iter().map(|variant| {
-                let variant_ident = &variant.ident;
-                match &variant.fields {
-                    Fields::Named(fields_named) => {
-                        let field_names = fields_named.named.iter().map(|f| f.ident.clone());
-                        let validations_iter = fields_named.named.iter().map(|field| {
-                            let field_name = &field.ident;
-                            if type_is_nested_reference(&field.ty) == IsNestedReference::More {
-                                abort!(
-                                    field.ty.span(), "Field `{}` is a reference to a reference, which is not supported.", field_name.as_ref().unwrap();
-                                    help = "Use a single reference instead, e.g. `&T` instead of `&&T`."
-                                )
-                            }
-                            if field.attrs.is_empty() {
-                                check_valid_rod_type!(field.ty, field.ty.span(), field_name);
-                                quote! {
-                                    assert_impl_rod_validate(#field_name)?;
+                                let assert = assert_impl_rod_validate(#field_name);
+                                if let Err(errs) = assert {
+                                    for e in errs {
+                                        #ret;
+                                    }
                                 }
-                            } else {
-                                get_field_validations!(
-                                    field_name.as_ref().unwrap(),
-                                    field,
-                                ).collect()
                             }
-                        });
-                        quote! {
-                            Self::#variant_ident { #( #field_names ),* } => {
-                                #(#validations_iter)*
-                            }
-                        }
-                    }
-                    Fields::Unnamed(fields_unnamed) => {
-                        let field_count = fields_unnamed.unnamed.len();
-                        let field_idents: Vec<syn::Ident> = (0..field_count)
-                            .map(|i| syn::Ident::new(&format!("field_{}", i), proc_macro2::Span::call_site()))
-                            .collect();
-                        let validations_iter = fields_unnamed.unnamed.iter().enumerate().map(|(idx, field)| {
-                            let field_ident = field_idents.get(idx);
-                            if type_is_nested_reference(&field.ty) == IsNestedReference::More {
-                                abort!(
-                                    field.ty.span(), "Field {} of variant `{}` is a reference to a reference, which is not supported.", idx, variant.ident;
-                                    help = "Use a single reference instead, e.g. `&T` instead of `&&T`."
-                                )
-                            }
-                            if field.attrs.is_empty() {
-                                check_valid_rod_type!(field.ty, field.ty.span(), field_ident);
-                                quote! {
-                                    assert_impl_rod_validate(#field_ident)?;
+                        } else {
+                            let validations: proc_macro2::TokenStream = get_field_validations!(
+                                field_name.as_ref().unwrap(),
+                                field,
+                                wrap_validations
+                            ).collect();
+                            match type_is_nested_reference(&field.ty) {
+                                IsNestedReference::None => quote! {
+                                    let #field_name = &self.#field_name;
+                                    #validations
+                                },
+                                IsNestedReference::Single => quote! {
+                                    let #field_name = self.#field_name;
+                                    #validations
+                                },
+                                IsNestedReference::More => {
+                                    // If the field is a reference to a reference, we cannot validate it directly
+                                    // because it would require dereferencing, which would require the type to be `Copy` or `Deref`.
+                                    // Maybe we should allow this in the future, but for now we just abort.
+                                    abort!(
+                                        field.ty.span(), "Field `{}` is a reference to a reference, which is not supported.", field_name.as_ref().unwrap();
+                                        help = "Use a single reference instead, e.g. `&T` instead of `&&T`."
+                                    )
                                 }
-                            } else {
-                                get_field_validations!(
-                                    field_ident.as_ref().unwrap(),
-                                    field,
-                                ).collect()
                             }
-                        });
-                        quote! {
-                            Self::#variant_ident(#( #field_idents ),*) => {
-                                #(#validations_iter)*
+                        }
+                    }).collect()
+                } else {
+                    unreachable!()
+                }
+            },
+            Data::Enum(data_enum) => {
+                let match_arms = data_enum.variants.iter().map(|variant| {
+                    let variant_ident = &variant.ident;
+                    match &variant.fields {
+                        Fields::Named(fields_named) => {
+                            let field_names = fields_named.named.iter().map(|f| f.ident.clone());
+                            let validations_iter = fields_named.named.iter().map(|field| {
+                                let field_name = &field.ident;
+                                if type_is_nested_reference(&field.ty) == IsNestedReference::More {
+                                    abort!(
+                                        field.ty.span(), "Field `{}` is a reference to a reference, which is not supported.", field_name.as_ref().unwrap();
+                                        help = "Use a single reference instead, e.g. `&T` instead of `&&T`."
+                                    )
+                                }
+                                if field.attrs.is_empty() {
+                                    check_valid_rod_type!(field.ty, field.ty.span(), field_name);
+                                    let ret = wrap_validations(quote! { e });
+                                    quote! {
+                                        let #field_name = &self.#field_name;
+                                        let assert = assert_impl_rod_validate(#field_name);
+                                        if let Err(errs) = assert {
+                                            for e in errs {
+                                                #ret;
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    get_field_validations!(
+                                        field_name.as_ref().unwrap(),
+                                        field,
+                                        wrap_validations
+                                    ).collect()
+                                }
+                            });
+                            quote! {
+                                Self::#variant_ident { #( #field_names ),* } => {
+                                    #(#validations_iter)*
+                                }
+                            }
+                        }
+                        Fields::Unnamed(fields_unnamed) => {
+                            let field_count = fields_unnamed.unnamed.len();
+                            let field_idents: Vec<syn::Ident> = (0..field_count)
+                                .map(|i| syn::Ident::new(&format!("field_{}", i), proc_macro2::Span::call_site()))
+                                .collect();
+                            let validations_iter = fields_unnamed.unnamed.iter().enumerate().map(|(idx, field)| {
+                                let field_ident = field_idents.get(idx);
+                                if type_is_nested_reference(&field.ty) == IsNestedReference::More {
+                                    abort!(
+                                        field.ty.span(), "Field {} of variant `{}` is a reference to a reference, which is not supported.", idx, variant.ident;
+                                        help = "Use a single reference instead, e.g. `&T` instead of `&&T`."
+                                    )
+                                }
+                                if field.attrs.is_empty() {
+                                    check_valid_rod_type!(field.ty, field.ty.span(), field_ident);
+                                    let ret = wrap_validations(quote! { e });
+                                    quote! {
+                                        let assert = assert_impl_rod_validate(#field_ident);
+                                        if let Err(errs) = assert {
+                                            for e in errs {
+                                                #ret;
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    get_field_validations!(
+                                        field_ident.as_ref().unwrap(),
+                                        field,
+                                        wrap_validations
+                                    ).collect()
+                                }
+                            });
+                            quote! {
+                                Self::#variant_ident(#( #field_idents ),*) => {
+                                    #(#validations_iter)*
+                                }
+                            }
+                        }
+                        Fields::Unit => {
+                            quote! {
+                                Self::#variant_ident => {}
                             }
                         }
                     }
-                    Fields::Unit => {
-                        quote! {
-                            Self::#variant_ident => {}
-                        }
+                });
+                quote! {
+                    match self {
+                        #( #match_arms )*
                     }
                 }
-            });
-            quote! {
-                match self {
-                    #( #match_arms )*
-                }
             }
-        }
-        Data::Union(_) => {
-            todo!("Union types are not supported yet");
+            Data::Union(_) => {
+                todo!("Union types are not supported yet");
+            }
         }
     };
+
+    let validations = get_validations(|ret| {
+        quote! {
+            return Err(#ret);
+        }
+    });
+
+    let all_validations = get_validations(|ret| {
+        quote!{
+            errors.push(#ret);
+        }
+    });
 
     quote! {
         impl RodValidate for #name {
             fn validate(&self) -> Result<(), RodValidateError> {
-                fn assert_impl_rod_validate<T: RodValidate>(value: &T) -> Result<(), RodValidateError> {
-                    value.validate()
+                fn assert_impl_rod_validate<T: RodValidate>(value: &T) -> Result<(), Vec<RodValidateError>> {
+                    let result = value.validate();
+                    if result.is_err() {
+                        return Err(vec![result.unwrap_err()]);
+                    }
+                    Ok(())
                 }
                 #validations
                 Ok(())
+            }
+            fn validate_all(&self) -> Result<(), RodValidateErrorList> {
+                fn assert_impl_rod_validate<T: RodValidate>(value: &T) -> Result<(), RodValidateErrorList> {
+                    return value.validate_all();
+                }
+                let mut errors = RodValidateErrorList::new();
+                #all_validations
+                if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(errors)
+                }
             }
         }
     }

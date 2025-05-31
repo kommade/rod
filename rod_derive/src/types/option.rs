@@ -3,11 +3,13 @@ use quote::{format_ident, quote};
 
 use crate::{RodAttr, RodAttrContent};
 
+use super::optional_braced;
+
 macro_rules! rod_content_match {
-    ($content:expr, $field_access:expr, [ $( $variant:ident ),* ]) => {
+    ($content:expr, $field_access:expr, $wrap_return:expr, [ $( $variant:ident ),* ]) => {
         match $content {
             $(
-                RodAttrContent::$variant(content) => content.get_validations($field_access),
+                RodAttrContent::$variant(content) => content.get_validations($field_access, $wrap_return),
             )*
         }
     };
@@ -43,51 +45,64 @@ macro_rules! rod_content_match {
 /// };
 /// assert!(entity.validate().is_ok());
 /// ```
-/// 
 pub struct RodOptionContent {
     pub(crate) inner: Option<Box<RodAttr>>
 }
 
 impl Parse for RodOptionContent {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        if input.is_empty() {
-            return Ok(RodOptionContent { inner: None });
+        let opt = optional_braced(input)?;
+        let inner = match opt {
+            Some(inner) => inner,
+            None => {
+                return Ok(RodOptionContent { inner: None });
+            }
+        };
+        if inner.is_empty() {
+            Ok(RodOptionContent { inner: None })
+        } else {
+            let inside_opt = inner.parse::<RodAttr>()?;
+            Ok(RodOptionContent {
+                inner: Some(Box::new(inside_opt))
+            })
         }
-        let inner = input.parse::<RodAttr>()?;
-        Ok(RodOptionContent {
-            inner: Some(Box::new(inner))
-        })
-
     }
 }
 
 impl RodOptionContent {
-    pub(crate) fn get_validations(&self, field_name: &Ident) -> proc_macro2::TokenStream {
+    pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+        let path = field_name.to_string();
         if self.inner.is_none() {
+            let ret = wrap_return(quote! {
+                RodValidateError::Option(OptionValidation::Some(
+                    #path,
+                    format!("{:?}", #field_name)
+                ))
+            });
             quote! {
                 if #field_name.is_some() {
-                    return Err(RodValidateError::Option(OptionValidation::Some(
-                        format!("{:?}", #field_name)
-                    )));
+                    #ret;
                 }
             }
         } else {
             let inner_validation = rod_content_match!(
                 &self.inner.as_ref().unwrap().content,
                 &format_ident!("opt"),
+                wrap_return,
                 [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
             );
             let ty = self.inner.as_ref().unwrap().ty.to_string();
+            let ret = wrap_return(quote! {
+                RodValidateError::Option(OptionValidation::None(#path, #ty))
+            });
             quote! {
                 match &#field_name {
                     Some(opt) => {
                         #inner_validation
                     }
-                    None => return Err(
-                        RodValidateError::Option(
-                            OptionValidation::None(#ty)
-                        )
-                    )
+                    None => {
+                        #ret;
+                    }
                 }
             }
         }

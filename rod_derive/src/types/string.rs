@@ -8,7 +8,7 @@ use syn::{parse::Parse, LitStr};
 use syn::Ident;
 
 
-use super::LengthOrSize;
+use super::{optional_braced, LengthOrSize};
 
 #[cfg(feature = "regex")]
 mod regex_literals {
@@ -120,8 +120,9 @@ pub struct RodStringContent {
 }
 
 impl RodStringContent {
-    pub(crate) fn get_validations(&self, field_name: &Ident) -> proc_macro2::TokenStream {
-        let length_opt = self.length.as_ref().map(|length| length.validate_string(field_name));
+    pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+        let path = field_name.to_string();
+        let length_opt = self.length.as_ref().map(|length| length.validate_string(field_name, wrap_return));
         #[cfg(feature = "regex")]
         let format_opt = self.format.as_ref().map(|format| {
             let regex = match format {
@@ -133,31 +134,35 @@ impl RodStringContent {
                 StringFormat::Ipv6 => String::from(regex_literals::IPV6_REGEX),
                 StringFormat::DateTime => String::from(regex_literals::DATETIME_REGEX),
             };
+            let ret = wrap_return(quote!{ RodValidateError::String(StringValidation::Format(#path, name, #format)) });
             quote! {
                 if !regex::Regex::new(#regex).unwrap().is_match(&#field_name) {
                     let name = String::from(&#field_name);
-                    return Err(RodValidateError::String(StringValidation::Format(name, #format)));
+                    #ret;
                 }
             }
         });
         let starts_with_opt = self.starts_with.as_ref().map(|starts_with| {
+            let ret = wrap_return(quote!{ RodValidateError::String(StringValidation::StartsWith(#path, #field_name.clone().into(), #starts_with.into())) });
             quote! {
                 if !#field_name.starts_with(#starts_with) {
-                    return Err(RodValidateError::String(StringValidation::StartsWith(#field_name.clone().into(), #starts_with.into())));
+                    #ret;
                 }
             }
         });
         let ends_with_opt = self.ends_with.as_ref().map(|ends_with| {
+            let ret = wrap_return(quote!{ RodValidateError::String(StringValidation::EndsWith(#path, #field_name.clone().into(), #ends_with.into())) });
             quote! {
                 if !#field_name.ends_with(#ends_with) {
-                    return Err(RodValidateError::String(StringValidation::EndsWith(#field_name.clone().into(), #ends_with.into())));
+                    #ret;
                 }
             }
         });
         let includes_opt = self.includes.as_ref().map(|includes| {
+            let ret = wrap_return(quote!{ RodValidateError::String(StringValidation::Includes(#path, #field_name.clone().into(), #includes.into())) });
             quote! {
                 if !#field_name.contains(#includes) {
-                    return Err(RodValidateError::String(StringValidation::Includes(#field_name.clone().into(), #includes.into())));
+                    #ret;
                 }
             }
         });
@@ -174,6 +179,19 @@ impl RodStringContent {
 
 impl Parse for RodStringContent {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let opt = optional_braced(input)?;
+        let inner = match opt {
+            Some(buffer) => buffer,
+            None => return Ok(RodStringContent {
+                length: None,
+                #[cfg(feature = "regex")]
+                format: None,
+                starts_with: None,
+                ends_with: None,
+                includes: None,
+            }),
+        };
+
         let mut length = None;
         #[cfg(feature = "regex")]
         let mut format = None;
@@ -181,20 +199,20 @@ impl Parse for RodStringContent {
         let mut ends_with = None;
         let mut includes = None;
 
-        while !input.is_empty() {
-            let lookahead = input.lookahead1();
+        while !inner.is_empty() {
+            let lookahead = inner.lookahead1();
             if lookahead.peek(syn::Ident) {
-                let ident: syn::Ident = input.parse()?;
+                let ident: syn::Ident = inner.parse()?;
                 if ident == "length" {
                     check_already_used_attr!(length, ident.span());
-                    input.parse::<syn::Token![:]>()?;
-                    length = Some(input.parse()?);
+                    inner.parse::<syn::Token![:]>()?;
+                    length = Some(inner.parse()?);
                 } else if ident == "format" {
                     #[cfg(feature = "regex")]
                     {
                         check_already_used_attr!(format, ident.span());
-                        input.parse::<syn::Token![:]>()?;
-                        format = Some(input.parse()?);
+                        inner.parse::<syn::Token![:]>()?;
+                        format = Some(inner.parse()?);
                     }
                     #[cfg(not(feature = "regex"))]
                     {
@@ -202,16 +220,16 @@ impl Parse for RodStringContent {
                     }
                 } else if ident == "includes" {
                     check_already_used_attr!(includes, ident.span());
-                    input.parse::<syn::Token![:]>()?;
-                    includes = Some(input.parse()?);
+                    inner.parse::<syn::Token![:]>()?;
+                    includes = Some(inner.parse()?);
                 } else if ident == "starts_with" {
                     check_already_used_attr!(starts_with, ident.span());
-                    input.parse::<syn::Token![:]>()?;
-                    starts_with = Some(input.parse()?);
+                    inner.parse::<syn::Token![:]>()?;
+                    starts_with = Some(inner.parse()?);
                 } else if ident == "ends_with" {
                     check_already_used_attr!(ends_with, ident.span());
-                    input.parse::<syn::Token![:]>()?;
-                    ends_with = Some(input.parse()?);
+                    inner.parse::<syn::Token![:]>()?;
+                    ends_with = Some(inner.parse()?);
                 } else {
                     abort!(
                         ident.span(),
@@ -220,14 +238,12 @@ impl Parse for RodStringContent {
                 }
             } else {
                 abort!(
-                    input.span(),
+                    inner.span(),
                     "Expected an identifier"
                 );
             }
 
-            if input.peek(syn::Token![,]) {
-                input.parse::<syn::Token![,]>()?;
-            }
+            _ = inner.parse::<syn::Token![,]>();
         }
 
         Ok(RodStringContent { 

@@ -1,6 +1,8 @@
 use proc_macro_error::abort;
-use syn::{parse::Parse, Ident};
+use syn::{braced, parse::Parse, Ident};
 use quote::quote;
+
+use super::optional_braced;
 
 
 /// `RodBooleanContent` is a struct that represents the content of a boolean field in a Rod entity.
@@ -11,18 +13,21 @@ pub struct RodBooleanContent {}
 
 impl Parse for RodBooleanContent {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        if !input.is_empty() {
-            abort!(
-                input.span(),
-                "Expected no attributes for boolean fields. Use `Literal` to check if a boolean is true or false."
-            )
+        let inner = optional_braced(input);
+        if let Ok(Some(buffer)) = &inner {
+            if !buffer.is_empty() {
+                abort!(
+                    buffer.span(),
+                    "Boolean fields do not have any attributes. If you want to check if a boolean is true or false, use `Literal` instead."
+                );
+            }
         }
         Ok(RodBooleanContent {})
     }
 }
 
 impl RodBooleanContent {
-    pub(crate) fn get_validations(&self, _field_name: &Ident) -> proc_macro2::TokenStream {
+    pub(crate) fn get_validations(&self, _field_name: &Ident, _wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         quote! {}
     }
 }

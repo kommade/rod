@@ -1,4 +1,4 @@
-use std::{error::Error, fmt::{Display, Formatter}};
+use std::{ops::Index, error::Error, fmt::{Display, Formatter}};
 
 macro_rules! rod_validation_types {
     (
@@ -16,6 +16,7 @@ macro_rules! rod_validation_types {
             $(
                 $tuple_name($mod_name::$type_name),
             )*
+            CheckFailed(&'static str),
         }
 
         impl Error for RodValidateError {}
@@ -25,9 +26,63 @@ macro_rules! rod_validation_types {
                 match self {
                     $(
                         RodValidateError::$tuple_name(validation) => 
-                            write!(f, "Error validating {}: {}", stringify!($mod_name), validation),
+                            write!(f, "{}", validation),
                     )*
+                    RodValidateError::CheckFailed(path) => 
+                        write!(f, "Custom validation check failed for `{}`", path),
                 }
+            }
+        }
+
+        #[derive(Debug, Clone)]
+        pub struct RodValidateErrorList(Vec<RodValidateError>);
+
+        impl RodValidateErrorList {
+            pub fn new() -> Self {
+                RodValidateErrorList(Vec::new())
+            }
+            pub fn push(&mut self, error: RodValidateError) {
+                self.0.push(error);
+            }
+            pub fn is_empty(&self) -> bool {
+                self.0.is_empty()
+            }
+            pub fn len(&self) -> usize {
+                self.0.len()
+            }
+        }
+
+        impl Index<usize> for RodValidateErrorList {
+            type Output = RodValidateError;
+
+            fn index(&self, index: usize) -> &Self::Output {
+                &self.0[index]
+            }
+        }
+
+        impl Iterator for RodValidateErrorList {
+            type Item = RodValidateError;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                self.0.pop()
+            }
+        }
+
+        impl Error for RodValidateErrorList {}
+
+        impl Display for RodValidateErrorList {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                if self.0.is_empty() {
+                    return write!(f, "No validation errors");
+                }
+                write!(f, "Got {} errors while validating: [\n", self.0.len())?;
+                for (i, error) in self.0.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ",\n")?;
+                    }
+                    write!(f, "    {}", error)?;
+                }
+                write!(f, "\n]")
             }
         }
     }

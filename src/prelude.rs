@@ -69,13 +69,13 @@ pub use crate::RodValidate;
 /// #[derive(RodValidate)]
 /// struct Test {
 ///     #[rod(
-///         Tuple {
+///         Tuple (
 ///             i32 {
 ///                 size: 6..8,
 ///                 sign: Positive,
 ///                 step: 2,
 ///             },
-///             Tuple {
+///             Tuple (
 ///                 i32 {
 ///                     size: 6..=8,
 ///                     sign: Positive,
@@ -86,8 +86,8 @@ pub use crate::RodValidate;
 ///                     sign: Positive,
 ///                     step: 2,
 ///                 }
-///             }
-///         }
+///             )
+///         )
 ///     )]
 ///     field: (i32, (i32, u8)),
 /// }
@@ -100,7 +100,7 @@ pub use crate::RodValidate;
 /// #[derive(RodValidate)]
 /// struct Test {
 ///     #[rod(
-///         Tuple {
+///         Tuple (
 ///             i32 {
 ///                 size: 6..8,
 ///                 sign: Positive,
@@ -116,7 +116,7 @@ pub use crate::RodValidate;
 ///                     sign: Positive,
 ///                     step: 2,
 ///                 }
-///         }
+///         )
 ///     )]
 ///     field: (i32, (i32, i32)),
 /// }
@@ -137,6 +137,24 @@ pub use crate::RodValidate;
 ///        }
 ///    )]
 ///    field: &'static &'static i32, // This will fail to compile
+/// }
+/// 
+/// ```
+/// Check synatx that doesn't return a boolean
+/// ```compile_fail
+/// use rod::prelude::*;
+/// #[derive(RodValidate)]
+/// struct Test {
+///     #[rod(
+///         i32 {
+///             size: 6..=8,
+///             sign: Positive,
+///         },
+///         check = |x| {
+///             "not a boolean"
+///         }
+///     )]
+///     field: i32,
 /// }
 /// ```
 pub use rod_derive::RodValidate;

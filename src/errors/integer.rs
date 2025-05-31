@@ -48,17 +48,17 @@ impl Display for Integer {
 
 #[derive(Debug, Clone)]
 pub enum IntegerValidation {
-    Size(Integer, String),
-    Sign(Integer, &'static str),
-    Step(Integer, Integer),
+    Size(&'static str, Integer, String),
+    Sign(&'static str, Integer, &'static str),
+    Step(&'static str, Integer, Integer),
 }
 
 impl Display for IntegerValidation {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            IntegerValidation::Size(int, size) => write!(f, "Expected integer {}, got {}", size, int),
-            IntegerValidation::Sign(int, sign) => write!(f, "Expected integer with sign {}, got {}", sign, int),
-            IntegerValidation::Step(int, step) => write!(f, "Expected integer with step: {}, got {}", step, int),
+            IntegerValidation::Size(path, int, size) => write!(f, "Expected `{}` to be an integer {}, got {}", path, size, int),
+            IntegerValidation::Sign(path, int, sign) => write!(f, "Expected `{}` to be an integer with sign {}, got {}", path, sign, int),
+            IntegerValidation::Step(path, int, step) => write!(f, "Expected `{}` to be an integer with step {}, got {}", path, step, int),
         }
     }
 }

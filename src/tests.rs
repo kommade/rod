@@ -228,7 +228,7 @@ fn test_tuple() {
     #[derive(RodValidate)]
     struct Test {
         #[rod(
-            Tuple {
+            Tuple (
                 i32 {
                     size: 6..8,
                     sign: Positive,
@@ -239,7 +239,7 @@ fn test_tuple() {
                     sign: Positive,
                     step: 2,
                 }
-            }
+            )
         )]
         field: (i32, i32),
     }
@@ -258,13 +258,13 @@ fn test_tuple_nested() {
     #[derive(RodValidate)]
     struct Test {
         #[rod(
-            Tuple {
+            Tuple (
                 i32 {
                     size: 6..8,
                     sign: Positive,
                     step: 2,
                 },
-                Tuple {
+                Tuple (
                     i32 {
                         size: 6..=8,
                         sign: Positive,
@@ -275,8 +275,8 @@ fn test_tuple_nested() {
                         sign: Positive,
                         step: 2,
                     }
-                }
-            }
+                )
+            )
         )]
         field: (i32, (i32, i32)),
     }
@@ -306,14 +306,14 @@ fn test_tuple_struct() {
     #[derive(RodValidate)]
     struct Test {
         #[rod(
-            Tuple {
+            Tuple (
                 InsideTuple,
                 i32 {
                     size: 6..=8,
                     sign: Positive,
                     step: 2,
                 }
-            }
+            )
         )]
         field: (InsideTuple, i32),
         #[rod(skip)]
@@ -330,21 +330,6 @@ fn test_tuple_struct() {
     };
     assert!(test.validate().is_err(), "{}", test.validate().unwrap_err());
 }
-
-// #[test]
-// fn test_inside_fn_ptr() {
-//     #[derive(RodValidate)]
-//     struct Test {
-//         #[rod(
-//             i32 {
-//                 size: 6..8,
-//                 sign: Positive,
-//                 step: 2,
-//             }
-//         )]
-//         field: fn(i32) -> i32,
-//     }
-// }
 
 #[test]
 fn test_struct_with_reference() {
@@ -405,6 +390,7 @@ fn test_enum_with_reference() {
     assert!(test.validate().is_err(), "{}", test.validate().unwrap_err());
 }
 
+#[test]
 fn test_iterable() {
     #[derive(RodValidate)]
     struct Test {
@@ -414,7 +400,8 @@ fn test_iterable() {
                     size: 6..=8,
                     sign: Positive,
                     step: 2,
-                }
+                },
+                length: 2,
             }
         )]
         field: Vec<i32>,
@@ -427,4 +414,93 @@ fn test_iterable() {
         field: vec![5, 7],
     };
     assert!(test.validate().is_err(), "{}", test.validate().unwrap_err());
+    let test = Test {
+        field: vec![6, 8, 10],
+    };
+    assert!(test.validate().is_err(), "{}", test.validate().unwrap_err());
+    let test = Test {
+        field: vec![6],
+    };
+    assert!(test.validate().is_err(), "{}", test.validate().unwrap_err());
+}
+
+fn test_validate_all() {
+    #[derive(RodValidate)]
+    struct Test {
+        #[rod(
+            i32 {
+                size: 6..=8,
+                sign: Positive,
+                step: 2,
+            }
+        )]
+        field1: i32,
+        #[rod(
+            String {
+                length: 5,
+            }
+        )]
+        field2: String,
+    }
+    let test = Test {
+        field1: 6,
+        field2: "12345".to_string(),
+    };
+    assert!(test.validate_all().is_ok(), "{}", test.validate_all().unwrap_err());
+    let test = Test {
+        field1: 5,
+        field2: "123456".to_string(),
+    };
+    assert!(test.validate_all().is_err() && test.validate_all().unwrap_err().len() == 3, "{}", test.validate_all().unwrap_err());
+}
+
+#[test]
+fn test_custom_check() {
+    #[derive(RodValidate)]
+    struct CustomField {
+        #[rod(String)]
+        field: String,
+    }
+    #[derive(RodValidate)]
+    struct Test {
+        #[rod(
+            CustomField,
+            check = |x| {
+                x.field.len() > 5
+            }
+        )]
+        field: CustomField,
+    }
+    let test = Test {
+        field: CustomField {
+            field: "123456".to_string(),
+        },
+    };
+    assert!(test.validate().is_ok(), "{}", test.validate().unwrap_err());
+    let test = Test {
+        field: CustomField {
+            field: "12345".to_string(),
+        },
+    };
+    assert!(test.validate().is_err(), "{}", test.validate().unwrap_err());
+}
+
+#[test]
+fn test_custom_check_complicated() {
+    #[derive(RodValidate)]
+    struct MyEntity {
+        #[rod(
+            String {
+                length: 5..=10,
+            },
+            check = |s| {
+                s.chars().all(|c| c.is_alphanumeric())
+            }
+        )]
+        my_string: String,
+    }
+    let entity = MyEntity {
+        my_string: "Hello123".to_string(),
+    };
+    assert!(entity.validate().is_ok());
 }

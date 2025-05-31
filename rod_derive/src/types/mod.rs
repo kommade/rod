@@ -1,5 +1,5 @@
 use proc_macro_error::abort;
-use syn::{parse::Parse, ExprRange, Ident, LitInt, Token};
+use syn::{parse::{Parse, ParseBuffer}, ExprRange, Ident, LitInt, Token};
 use quote::{quote, ToTokens};
 
 macro_rules! check_already_used_attr {
@@ -34,73 +34,101 @@ impl Parse for LengthOrSize {
 }
 
 impl LengthOrSize {
-    pub(crate) fn validate_string(&self, field_name: &Ident) -> proc_macro2::TokenStream {
+    pub(crate) fn validate_string(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+        let path = field_name.to_string();
         match self {
             LengthOrSize::Exact(exact) => {
+                let ret = wrap_return(quote! {
+                    RodValidateError::String(StringValidation::Length(#path, #field_name.to_string(), format!("to be exactly {}", #exact)))
+                });
                 quote! {
                     if #field_name.len() != #exact {
-                        return Err(RodValidateError::String(StringValidation::Length(#field_name.to_string(), format!("to be exactly {}", #exact))));
+                        #ret;
                     }
                 }
             }
             LengthOrSize::Range(range) => {
+                let ret = wrap_return(quote! {
+                    RodValidateError::String(StringValidation::Length(#path, #field_name.to_string(), format!("to be in the range {:?}", #range)))
+                });
                 quote! {
                     if !(#range).contains(&#field_name.len()) {
-                        return Err(RodValidateError::String(StringValidation::Length(#field_name.to_string(), format!("to be in the range {:?}", #range))));
+                        #ret;
                     }
                 }
             }
         }
     }
-    pub(crate) fn validate_integer(&self, field_name: &Ident) -> proc_macro2::TokenStream {
+    pub(crate) fn validate_integer(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+        let path = field_name.to_string();
         match self {
             LengthOrSize::Exact(exact) => {
+                let ret = wrap_return(quote! {
+                    RodValidateError::Integer(IntegerValidation::Size(#path, #field_name.clone().into(), format!("to be exactly {}", #exact)))
+                });
                 quote! {
                     if #field_name != #exact {
-                        return Err(RodValidateError::Integer(IntegerValidation::Size(#field_name.clone().into(), format!("to be exactly {}", #exact))));
+                        #ret;
                     }
                 }
             }
             LengthOrSize::Range(range) => {
+                let ret = wrap_return(quote! {
+                    RodValidateError::Integer(IntegerValidation::Size(#path, #field_name.clone().into(), format!("to be in the range {:?}", #range)))
+                });
                 quote! {
                     if !(#range).contains(#field_name) {
-                        return Err(RodValidateError::Integer(IntegerValidation::Size(#field_name.clone().into(), format!("to be in the range {:?}", #range))));
+                        #ret;
                     }
                 }
             }
         }
     }
-    pub(crate) fn validate_float(&self, field_name: &Ident) -> proc_macro2::TokenStream {
+    pub(crate) fn validate_float(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+        let path = field_name.to_string();
         match self {
             LengthOrSize::Exact(exact) => {
+                let ret = wrap_return(quote! {
+                    RodValidateError::Float(FloatValidation::Size(#path, #field_name.clone().into(), format!("to be exactly {}", #exact)))
+                });
                 quote! {
                     if #field_name != #exact as f64 {
-                        return Err(RodValidateError::Float(FloatValidation::Size(#field_name.clone().into(), format!("to be exactly {}", #exact))));
+                        #ret;
                     }
                 }
             }
             LengthOrSize::Range(range) => {
+                let ret = wrap_return(quote! {
+                    RodValidateError::Float(FloatValidation::Size(#path, #field_name.clone().into(), format!("to be in the range {:?}", #range)))
+                });
                 quote! {
                     if !(#range).contains(#field_name) {
-                        return Err(RodValidateError::Float(FloatValidation::Size(#field_name.clone().into(), format!("to be in the range {:?}", #range))));
+                        #ret;
                     }
                 }
             }
         }
     }
-    pub(crate) fn validate_iterable(&self, field_name: &Ident) -> proc_macro2::TokenStream {
+    pub(crate) fn validate_iterable(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+        let path = field_name.to_string();
         match self {
             LengthOrSize::Exact(exact) => {
+                let ret = wrap_return(quote! {
+                    RodValidateError::Iterable(IterableValidation::Length(#path, #field_name.len(), format!("to be exactly {}", #exact)))
+                });
                 quote! {
                     if #field_name.len() != #exact {
-                        return Err(RodValidateError::Iterable(IterableValidation::Length(#field_name.to_string(), format!("to be exactly {}", #exact))));
+                        #ret;
                     }
                 }
             }
             LengthOrSize::Range(range) => {
+                let ret = wrap_return(quote! {
+                    RodValidateError::Iterable(IterableValidation::Length(#path, #field_name.len(), format!("to be in the range {:?}", #range)))
+                });
                 quote! {
                     if !(#range).contains(&#field_name.len()) {
-                        return Err(RodValidateError::Iterable(IterableValidation::Length(#field_name.to_string(), format!("to be in the range {:?}", #range))));
+                        #ret;
                     }
                 }
             }
@@ -139,6 +167,26 @@ impl Parse for NumberSign {
             "Nonnegative" => Ok(NumberSign::Nonnegative),
             _ => Err(input.error("Expected `sign` to be one of Positive, Negative, Nonpositive, Nonnegative")),
         }
+    }
+}
+
+pub(super) fn optional_braced(input: syn::parse::ParseStream) -> syn::Result<Option<ParseBuffer>> {
+    if input.peek(syn::token::Brace) {
+        let content;
+        syn::braced!(content in input);
+        Ok(Some(content))
+    } else {
+        Ok(None)
+    }
+}
+
+pub(super) fn optional_paren(input: syn::parse::ParseStream) -> syn::Result<Option<ParseBuffer>> {
+    if input.peek(syn::token::Paren) {
+        let content;
+        syn::parenthesized!(content in input);
+        Ok(Some(content))
+    } else {
+        Ok(None)
     }
 }
 

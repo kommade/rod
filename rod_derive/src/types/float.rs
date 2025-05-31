@@ -1,9 +1,9 @@
 use proc_macro_error::abort;
-use syn::{parse::Parse, Ident};
+use syn::{braced, parse::Parse, Ident};
 use quote::{quote, ToTokens};
 
 
-use super::{LengthOrSize, NumberSign};
+use super::{optional_braced, LengthOrSize, NumberSign};
 
 enum FloatType {
     Nan,
@@ -77,8 +77,9 @@ pub struct RodFloatContent {
 }
 
 impl RodFloatContent {
-    pub(crate) fn get_validations(&self, field_name: &Ident) -> proc_macro2::TokenStream {
-        let size_opt = self.size.as_ref().map(|size| size.validate_float(field_name));
+    pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+        let path = field_name.to_string();
+        let size_opt = self.size.as_ref().map(|size| size.validate_float(field_name, wrap_return));
         let sign_opt = self.sign.as_ref().map(|sign| {
             let sign_check = match sign {
                 NumberSign::Positive => quote!(#field_name.is_sign_positive()),
@@ -86,9 +87,12 @@ impl RodFloatContent {
                 NumberSign::Nonpositive => quote!(!#field_name.is_sign_positive()),
                 NumberSign::Nonnegative => quote!(!#field_name.is_sign_negative()),
             };
+            let ret = wrap_return(quote! {
+                RodValidateError::Float(FloatValidation::Sign(#path, #field_name.clone().into(), #sign))
+            });
             quote! {
                 if !(#sign_check) {
-                    return Err(RodValidateError::Float(FloatValidation::Sign(#field_name.clone().into(), #sign)));
+                    #ret;
                 }
             }
         });
@@ -100,9 +104,12 @@ impl RodFloatContent {
                 FloatType::Normal => quote!(#field_name.is_normal()),
                 FloatType::Subnormal => quote!(#field_name.is_subnormal()),
             };
+            let ret = wrap_return(quote! {
+                RodValidateError::Float(FloatValidation::Type(#path, #field_name.clone().into(), #r#type))
+            });
             quote! {
                 if !(#type_check) {
-                    return Err(RodValidateError::Float(FloatValidation::Type(#field_name.clone().into(), #r#type)));
+                    #ret;
                 }
             }
         });
@@ -116,45 +123,52 @@ impl RodFloatContent {
 
 impl Parse for RodFloatContent {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let opt = optional_braced(input)?;
+        let inner = match opt {
+            Some(buffer) => buffer,
+            None => return Ok(RodFloatContent {
+                size: None,
+                sign: None,
+                r#type: None,
+            })
+        };
         let mut size = None;
         let mut sign = None;
         let mut r#type = None;
-
-        while !input.is_empty() {
-            let lookahead = input.lookahead1();
+        while !inner.is_empty() {
+            let lookahead = inner.lookahead1();
             if lookahead.peek(syn::Ident) {
-                let ident: syn::Ident = input.parse()?;
-                if ident == "size" {
+                let ident: syn::Ident = inner.parse()?;
+                if ident == "size" || ident == "range" {
                     check_already_used_attr!(size, ident.span());
-                    input.parse::<syn::Token![:]>()?;
-                    size = Some(input.parse()?);
+                    inner.parse::<syn::Token![:]>()?;
+                    size = Some(inner.parse()?);
                 } else if ident == "sign" {
                     check_already_used_attr!(sign, ident.span());
-                    input.parse::<syn::Token![:]>()?;
-                    sign = Some(input.parse()?);
+                    inner.parse::<syn::Token![:]>()?;
+                    sign = Some(inner.parse()?);
                 } else if ident == "type" {
                     check_already_used_attr!(r#type, ident.span());
-                    input.parse::<syn::Token![:]>()?;
-                    r#type = Some(input.parse()?);
+                    inner.parse::<syn::Token![:]>()?;
+                    r#type = Some(inner.parse()?);
                 } else {
                     abort!(
                         ident.span(),
                         "Unknown attribute `{}`", ident
                     );
                 }
-                input.parse::<syn::Token![,]>()?;
+                _ = inner.parse::<syn::Token![,]>();
             } else {
                 abort!(
-                    input.span(),
+                    inner.span(),
                     "Expected an identifier"
                 );
             }
-
-            if input.peek(syn::Token![,]) {
-                input.parse::<syn::Token![,]>()?;
-            }
         }
-
-        Ok(RodFloatContent { size, sign, r#type })
+        Ok(RodFloatContent {
+            size,
+            sign,
+            r#type,
+        })
     }
 }
