@@ -8,7 +8,7 @@ readme = "README.md"
 license = "GPL-3.0"
 repository = "https://github.com/kommade/rod/tree/master/rod_derive"
 keywords = ["validation", "proc-macro", "derive", "rod"]
-categories = ["development-tools", "parsing", "code-generation"]
+categories = ["development-tools", "parsing"]
 
 [lib]
 proc-macro = true

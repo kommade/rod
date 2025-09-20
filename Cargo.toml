@@ -8,7 +8,7 @@ readme = "README.md"
 license = "GPL-3.0"
 repository = "https://github.com/kommade/rod"
 keywords = ["validation", "forms", "data-validation", "serde", "derive"]
-categories = ["development-tools", "parsing", "code-generation"]
+categories = ["development-tools", "parsing"]
 
 [dependencies]
 regex = { version = "1.11.2", optional = true }
