@@ -424,6 +424,7 @@ fn test_iterable() {
     assert!(test.validate().is_err(), "{}", test.validate().unwrap_err());
 }
 
+#[test]
 fn test_validate_all() {
     #[derive(RodValidate)]
     struct Test {

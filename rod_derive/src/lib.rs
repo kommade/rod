@@ -836,9 +836,7 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
                     }
                 }
             }
-            Data::Union(_) => {
-                todo!("Union types are not supported yet");
-            }
+            Data::Union(_) => unimplemented!("Unions are not supported"), // it doesn't make sense to validate unions as we have no way of knowing which field is active
         }
     };
 
