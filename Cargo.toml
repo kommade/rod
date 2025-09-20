@@ -2,6 +2,13 @@
 name = "rod"
 version = "0.2.0"
 edition = "2024"
+authors = ["kommade"]
+description = "A lightweight and ergonomic validation library for Rust"
+readme = "README.md"
+license = "GPL-3.0"
+repository = "https://github.com/kommade/rod"
+keywords = ["validation", "forms", "data-validation", "serde", "derive"]
+categories = ["development-tools", "parsing", "code-generation"]
 
 [dependencies]
 regex = { version = "1.11.2", optional = true }
