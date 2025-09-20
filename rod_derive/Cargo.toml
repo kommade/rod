@@ -1,9 +1,9 @@
 [package]
 name = "rod_derive"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 authors = ["kommade"]
-description = "Procedural macro for the Rod validation library"
+description = "Procedural macro for the Rod Validation library"
 readme = "README.md"
 license = "GPL-3.0"
 repository = "https://github.com/kommade/rod/tree/master/rod_derive"

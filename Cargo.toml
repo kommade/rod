@@ -1,5 +1,5 @@
 [package]
-name = "rod"
+name = "rod_validation"
 version = "0.2.0"
 edition = "2024"
 authors = ["kommade"]

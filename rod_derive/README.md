@@ -1,30 +1,30 @@
 # Rod Derive
 
-[![Crates.io](https://img.shields.io/crates/v/rod_derive.svg)](https://crates.io/crates/rod_derive)
-[![Documentation](https://docs.rs/rod_derive/badge.svg)](https://docs.rs/rod_derive)
+[![Crates.io]](https://crates.io/crates/rod_derive)
+[![Documentation]](https://docs.rs/rod_derive)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://github.com/kommade/rod/blob/master/LICENSE)
 
-Procedural macro for the Rod validation library. This crate provides the `#[derive(RodValidate)]` macro that generates validation code based on field attributes.
+Procedural macro for the Rod Validation library. This crate provides the `#[derive(RodValidate)]` macro that generates validation code based on field attributes.
 
 ## Overview
 
-`rod_derive` is the procedural macro component of the Rod validation framework. It automatically generates validation implementations for structs and enums based on declarative attributes.
+`rod_derive` is the procedural macro component of the Rod Validation framework. It automatically generates validation implementations for structs and enums based on declarative attributes.
 
-**This crate is typically used through the main `rod` crate and not directly.**
+**This crate is typically used through the main `rod_validation` crate and not directly.**
 
 ## Usage
 
-Add Rod to your `Cargo.toml`:
+Add Rod Validation to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rod = "0.2.0"
+rod_validation = "0.2.0"
 ```
 
 The derive macro is available through the prelude:
 
 ```rust
-use rod::prelude::*;
+use rod_validation::prelude::*;
 
 #[derive(RodValidate)]
 struct User {
@@ -38,7 +38,7 @@ struct User {
 
 ## Documentation
 
-For complete documentation, examples, technical details, and all supported validation attributes, see the main **[Rod crate documentation](https://docs.rs/rod)** and **[README](../README.md)**.
+For complete documentation, examples, technical details, and all supported validation attributes, see the main **[Rod Validation crate documentation](https://docs.rs/rod_validation)** and **[README](../README.md)**.
 
 This includes:
 
