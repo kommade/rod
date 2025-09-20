@@ -1,0 +1,105 @@
+name: PR CI & crates.io publish
+
+# Run cargo test on every PR. Only publish to crates.io after the PR is merged
+# (when changes are pushed to the default branch).
+#
+# Notes:
+# - Tests run on pull_request events.
+# - Publish runs on pushes to `main` — change the branch name if your default
+#   branch is different.
+# - Publishing uses the repository secret CARGO_SECRET (mapped to
+#   CARGO_REGISTRY_TOKEN). Secrets must be set in the repository settings.
+# - `rod_derive` is published from its subdirectory by cd'ing into it before
+#   running `cargo publish`.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-ci-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUSTUP_TOOLCHAIN: nightly
+
+jobs:
+  test:
+    name: Run tests on PRs
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
+
+      - name: Cache cargo registry, git index and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run cargo tests (all targets)
+        run: cargo test --all --all-targets
+
+  publish:
+    name: Publish rod_derive and rod to crates.io
+    runs-on: ubuntu-latest
+    # Only run publish on pushes to main (i.e., after a PR merge) and when secret exists.
+    if: >
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      secrets.CARGO_SECRET != ''
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
+
+      - name: Cache cargo registry, git index and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-publish-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Configure cargo token
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_SECRET }}
+        run: |
+          # The token is provided via env and masked in logs.
+          echo "CARGO_REGISTRY_TOKEN configured (masked)."
+
+      - name: Publish `rod_derive` (cd into subdirectory then publish)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_SECRET }}
+        run: |
+          # cd into the subdirectory and publish from there.
+          cd rod_derive
+          cargo publish
+
+      - name: Publish `rod` (workspace root package)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_SECRET }}
+        run: |
+          # Publish the workspace package named `rod`. Adjust manifest-path if needed.
+          cargo publish -p rod
