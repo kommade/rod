@@ -1,8 +1,8 @@
 use proc_macro_error::abort;
-use syn::{parse::Parse, Ident, TypePath};
+use syn::{parse::Parse, Ident};
 use quote::{format_ident, quote};
 
-use crate::{RodAttr, RodAttrContent, TypeEnum};
+use crate::{RodAttr, RodAttrContent};
 
 use super::{optional_braced, LengthOrSize};
 

@@ -1,5 +1,5 @@
 use proc_macro_error::abort;
-use syn::{braced, parse::Parse, Ident};
+use syn::{parse::Parse, Ident};
 use quote::quote;
 
 use super::optional_braced;

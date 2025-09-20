@@ -11,6 +11,10 @@ macro_rules! rod_validation_types {
             pub use $mod_name::$type_name;
         )*
 
+        /// An error that can occur during validation.
+        /// This is a sum type of all possible validation errors.
+        /// It also includes a variant for custom validation checks that fail.
+        /// This is used in the `validate` method of the `RodValidate` trait.
         #[derive(Debug, Clone)]
         pub enum RodValidateError {
             $(
@@ -34,8 +38,16 @@ macro_rules! rod_validation_types {
             }
         }
 
+        /// A list of validation errors.
+        /// This is used in the `validate_all` method of the `RodValidate` trait
         #[derive(Debug, Clone)]
         pub struct RodValidateErrorList(Vec<RodValidateError>);
+
+        impl Default for RodValidateErrorList {
+            fn default() -> Self {
+                RodValidateErrorList::new()
+            }
+        }
 
         impl RodValidateErrorList {
             pub fn new() -> Self {

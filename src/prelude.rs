@@ -22,7 +22,7 @@ pub use crate::RodValidate;
 ///         }
 ///     )]
 ///     field1: String,
-///     field2: DoesNotImplementRodValidate, // This field does not implement RodValidate
+///     field2: DoesNotImplementRodValidate,
 /// }
 /// ```
 /// 
@@ -140,7 +140,7 @@ pub use crate::RodValidate;
 /// }
 /// 
 /// ```
-/// Check synatx that doesn't return a boolean
+/// Check syntax that doesn't return a boolean
 /// ```compile_fail
 /// use rod::prelude::*;
 /// #[derive(RodValidate)]
