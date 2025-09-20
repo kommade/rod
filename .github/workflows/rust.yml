@@ -61,8 +61,7 @@ jobs:
     # Only run publish on pushes to main (i.e., after a PR merge) and when secret exists.
     if: >
       github.event_name == 'push' &&
-      github.ref == 'refs/heads/main' &&
-      secrets.CARGO_SECRET != ''
+      github.ref == 'refs/heads/main'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
