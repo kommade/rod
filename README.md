@@ -1,7 +1,7 @@
 # Rod Validation
 
-[![Crates.io]](https://crates.io/crates/rod_validation)
-[![Documentation](https://docs.rs/rod_validation/badge.svg)](https://docs.rs/rod_validation)
+[Crates.io](https://crates.io/crates/rod_validation)
+[Documentation](https://docs.rs/rod_validation)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://github.com/kommade/rod/blob/master/LICENSE)
 
 A powerful and flexible compile-time validation library for Rust structs and enums. Rod provides declarative validation through derive macros, allowing you to specify validation rules directly in your type definitions.
@@ -366,7 +366,7 @@ The macro generates validation code that:
 
 ## Documentation
 
-For detailed documentation and examples, visit [docs.rs/rod_validation](https://docs.rs/rod_validation).
+For detailed documentation and examples, visit [docs.rs/rod](https://docs.rs/rod).
 
 ## License
 

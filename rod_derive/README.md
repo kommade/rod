@@ -1,7 +1,7 @@
 # Rod Derive
 
-[![Crates.io]](https://crates.io/crates/rod_derive)
-[![Documentation]](https://docs.rs/rod_derive)
+[Crates.io](https://crates.io/crates/rod_derive)
+[Documentation](https://docs.rs/rod_derive)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://github.com/kommade/rod/blob/master/LICENSE)
 
 Procedural macro for the Rod Validation library. This crate provides the `#[derive(RodValidate)]` macro that generates validation code based on field attributes.
