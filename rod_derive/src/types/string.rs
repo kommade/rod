@@ -120,7 +120,7 @@ pub struct RodStringContent {
 }
 
 impl RodStringContent {
-    pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    pub(crate) fn get_validations(&self, field_name: &proc_macro2::Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let path = field_name.to_string();
         let length_opt = self.length.as_ref().map(|length| length.validate_string(field_name, wrap_return));
         #[cfg(feature = "regex")]
@@ -141,6 +141,10 @@ impl RodStringContent {
                     #ret;
                 }
             }
+        });
+        #[cfg(not(feature = "regex"))]
+        let format_opt = self.format.as_ref().map(|format| {
+            abort!(format.to_token_stream().span(), "The `format` attribute is not available. Please enable the `regex` feature.");
         });
         let starts_with_opt = self.starts_with.as_ref().map(|starts_with| {
             let ret = wrap_return(quote!{ RodValidateError::String(StringValidation::StartsWith(#path, #field_name.clone().into(), #starts_with.into())) });
