@@ -1,10 +1,8 @@
 use proc_macro_error::abort;
 use quote::quote;
-#[cfg(feature = "regex")]
 use quote::ToTokens;
 
 use syn::{parse::Parse, LitStr};
-#[cfg(feature = "regex")]
 use syn::Ident;
 
 
@@ -23,7 +21,6 @@ mod regex_literals {
 /// `StringFormat` is an enum that represents the format of a string field.
 /// It includes variants for common formats such as email, URL, UUID, and IP addresses.
 /// The `Regex` variant allows for custom regex patterns.
-#[cfg(feature = "regex")]
 pub(crate) enum StringFormat {
     Regex(LitStr),
     Email,
@@ -34,7 +31,6 @@ pub(crate) enum StringFormat {
     DateTime,
 }
 
-#[cfg(feature = "regex")]
 impl ToTokens for StringFormat {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         match self {
@@ -49,7 +45,6 @@ impl ToTokens for StringFormat {
     }
 }
 
-#[cfg(feature = "regex")]
 impl Parse for StringFormat {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let lookahead = input.lookahead1();
@@ -112,7 +107,6 @@ impl Parse for StringFormat {
 /// 
 pub struct RodStringContent {
     length: Option<LengthOrSize>,
-    #[cfg(feature = "regex")]
     format: Option<StringFormat>,
     starts_with: Option<LitStr>,
     ends_with: Option<LitStr>,
@@ -143,9 +137,7 @@ impl RodStringContent {
             }
         });
         #[cfg(not(feature = "regex"))]
-        let format_opt = self.format.as_ref().map(|format| {
-            abort!(format.to_token_stream().span(), "The `format` attribute is not available. Please enable the `regex` feature.");
-        });
+        let format_opt: Option<proc_macro2::TokenStream> = None;
         let starts_with_opt = self.starts_with.as_ref().map(|starts_with| {
             let ret = wrap_return(quote!{ RodValidateError::String(StringValidation::StartsWith(#path, #field_name.clone().into(), #starts_with.into())) });
             quote! {
@@ -188,7 +180,6 @@ impl Parse for RodStringContent {
             Some(buffer) => buffer,
             None => return Ok(RodStringContent {
                 length: None,
-                #[cfg(feature = "regex")]
                 format: None,
                 starts_with: None,
                 ends_with: None,
@@ -197,7 +188,6 @@ impl Parse for RodStringContent {
         };
 
         let mut length = None;
-        #[cfg(feature = "regex")]
         let mut format = None;
         let mut starts_with = None;
         let mut ends_with = None;
@@ -252,7 +242,6 @@ impl Parse for RodStringContent {
 
         Ok(RodStringContent { 
             length, 
-            #[cfg(feature = "regex")]
             format,
             starts_with,
             ends_with,
