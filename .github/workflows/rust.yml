@@ -33,7 +33,7 @@ jobs:
   test:
     name: Run tests on PRs
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || github.event_name = 'workflow_dispatch'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
