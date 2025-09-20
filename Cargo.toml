@@ -1,6 +1,6 @@
 [package]
 name = "rod_validation"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 authors = ["kommade"]
 description = "A lightweight and ergonomic validation library for Rust"
@@ -12,7 +12,7 @@ categories = ["development-tools", "parsing"]
 
 [dependencies]
 regex = { version = "1.11.2", optional = true }
-rod_derive = { path = "./rod_derive", version = "0.2.0" }
+rod_derive = { path = "./rod_derive", version = "0.2.2" }
 
 [features]
 default = ["regex"]
