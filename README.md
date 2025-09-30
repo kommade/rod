@@ -304,7 +304,7 @@ struct SignupForm {
     )]
     password: String,
 }
-
+```
 If both error message syntaxes are attached, messages attached to specific rules will be preferred.
 
 ## Nested Structures
