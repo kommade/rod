@@ -150,7 +150,7 @@ struct FloatExample {
     #[rod(f64 {
         size: 0.0..=100.0,  // Value between 0.0 and 100.0
         sign: NonNegative,  // Must be non-negative
-        type: Finite,       // Must be finite (not NaN or infinite)
+        ftype: Finite,       // Must be finite (not NaN or infinite)
     })]
     field: f64,
 }
