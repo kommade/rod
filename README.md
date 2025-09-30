@@ -15,6 +15,7 @@ A powerful and flexible compile-time validation library for Rust structs and enu
 - **Custom validation**: Add custom validation logic with closures
 - **Regex support**: Built-in regex validation for strings (with optional `regex` feature)
 - **Nested validation**: Support for complex nested data structures
+- **Per-validation custom errors**: Attach tailored messages to individual validation rules for precise feedback
 
 ## Quick Start
 
@@ -22,14 +23,14 @@ Add Rod Validation to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rod_validation = "0.2.0"
+rod_validation = "0.2.2"
 ```
 
 For regex support:
 
 ```toml
 [dependencies]
-rod_validation = { version = "0.2.0", features = ["regex"] }
+rod_validation = { version = "0.2.2", features = ["regex"] }
 ```
 
 ## Basic Usage
@@ -270,6 +271,42 @@ match user.validate_all() {
 }
 ```
 
+## Per-Validation Custom Errors
+
+Attach bespoke error messages to any validation rule using the `? "<error>"` syntax. Messages placed immediately before a rule override its default error output.
+
+```rust
+#[derive(RodValidate)]
+struct SignupForm {
+    #[rod(String {
+        ? "Password must be at least eight characters long.",
+        length: 8..,
+        ? "Password must include the @ symbol for legacy compatibility.",
+        includes: "@",
+    })]
+    password: String,
+}
+```
+
+The custom messages are surfaced by both `validate` and `validate_all`, making it straightforward to deliver user-friendly, context-aware feedback.
+
+You may also override the error messages for all validation rules of a type with the `message: "<error>"` syntax.
+
+```rust
+#[derive(RodValidate)]
+struct SignupForm {
+    #[rod(
+        String {
+            length: 8..,
+            includes: "@",
+        },
+        message: "Password must be 8 characters AND have an @"
+    )]
+    password: String,
+}
+
+If both error message syntaxes are attached, messages attached to specific rules will be preferred.
+
 ## Nested Structures
 
 Rod supports validation of nested structures that implement `RodValidate`:
@@ -296,7 +333,7 @@ struct Person {
 
 ## Enums
 
-Rod supports validation of enum variants:
+Rod supports validation of enumeration variants:
 
 ```rust
 #[derive(RodValidate)]
@@ -340,7 +377,7 @@ The macro provides several compile-time guarantees:
 
 The macro generates validation code that:
 
-1. Traverses struct/enum fields recursively
+1. Traverses struct or enumeration fields recursively
 2. Applies validation rules in the order they appear in attributes
 3. Handles early return (fail-fast) or error collection (validate-all) modes
 4. Provides detailed error context with complete field paths

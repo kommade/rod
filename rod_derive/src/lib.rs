@@ -2,14 +2,18 @@ extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use proc_macro_error::{abort, emit_warning, proc_macro_error};
+use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{
-    parse_macro_input, Data, DeriveInput, ExprClosure, Fields, Ident, Result as SynResult, Type, TypeTuple
+    Data, DeriveInput, ExprClosure, Fields, Ident, LitStr, Result as SynResult, Type, TypeTuple,
+    parse_macro_input,
 };
-use quote::quote;
 mod types;
-use types::{CustomContent, RodBooleanContent, RodFloatContent, RodIntegerContent, RodLiteralContent, RodOptionContent, RodSkipContent, RodStringContent, RodTupleContent};
+use types::{
+    CustomContent, RodBooleanContent, RodFloatContent, RodIntegerContent, RodLiteralContent,
+    RodOptionContent, RodSkipContent, RodStringContent, RodTupleContent,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 enum TypeEnum {
@@ -28,7 +32,11 @@ impl std::fmt::Display for TypeEnum {
 
 fn get_type(ty: &Type) -> Option<TypeEnum> {
     match ty {
-        Type::Path(type_path) => type_path.path.segments.last().map(|s| TypeEnum::Type(s.ident.clone())),
+        Type::Path(type_path) => type_path
+            .path
+            .segments
+            .last()
+            .map(|s| TypeEnum::Type(s.ident.clone())),
         Type::Reference(type_ref) => get_type(type_ref.elem.as_ref()),
         Type::Tuple(tuple) => Some(TypeEnum::Tuple(tuple.clone())),
         _ => None,
@@ -64,9 +72,7 @@ fn recurse_rod_attr_opt(input: &RodAttr, level: usize) -> Option<(RodAttrType, u
                 None
             }
         }
-        _ => {
-            Some((input.ty.clone(), level))
-        }
+        _ => Some((input.ty.clone(), level)),
     }
 }
 
@@ -80,7 +86,11 @@ fn recurse_type_path(ty: &Type, level: usize) -> Option<(RodAttrType, usize)> {
                     }
                 }
             } else {
-                debug_assert!(<&syn::Type as TryInto<RodAttrType>>::try_into(ty).is_ok(), "Expected a valid rod type, but found: {:?}", ty);
+                debug_assert!(
+                    <&syn::Type as TryInto<RodAttrType>>::try_into(ty).is_ok(),
+                    "Expected a valid rod type, but found: {:?}",
+                    ty
+                );
                 let attr_ty = ty.try_into().ok()?;
                 return Some((attr_ty, level));
             }
@@ -136,7 +146,7 @@ fn recurse_tuple(ty: &Type, level: usize) -> Option<Vec<(RodAttrType, usize)>> {
 
 fn diff_tuple_array(
     expected: &Vec<(RodAttrType, usize)>,
-    actual: &Vec<(RodAttrType, usize)>
+    actual: &Vec<(RodAttrType, usize)>,
 ) -> ((RodAttrType, usize), (RodAttrType, usize)) {
     let mut i = 0;
     let mut j = 0;
@@ -150,14 +160,9 @@ fn diff_tuple_array(
     (expected[i].clone(), actual[j].clone())
 }
 
-fn recurse_iterable(
-    input: &RodAttr,
-    level: usize
-) -> Option<(RodAttrType, usize)> {
+fn recurse_iterable(input: &RodAttr, level: usize) -> Option<(RodAttrType, usize)> {
     match &input.content {
-        RodAttrContent::Iterable(content) => {
-            recurse_iterable(content.item.as_ref(), level + 1)
-        }
+        RodAttrContent::Iterable(content) => recurse_iterable(content.item.as_ref(), level + 1),
         _ => Some((input.ty.clone(), level)),
     }
 }
@@ -207,7 +212,7 @@ macro_rules! assert_type {
                                 help = "Try using {} instead of {}", inner_type.inner_type(), get_type($ty).unwrap()
                             );
                             }
-                        } 
+                        }
                     }
                 }
             }
@@ -237,8 +242,8 @@ macro_rules! assert_type {
                 let actual_type: RodAttrType = $ty.into();
                 if actual_type != $expected.ty && !matches!($expected.ty, RodAttrType::Literal(_)) {
                     abort!(
-                        $ty.span(), "Expected `{}` to be a {} type, but found {}", 
-                        $name, $expected.ty, actual_type; 
+                        $ty.span(), "Expected `{}` to be a {} type, but found {}",
+                        $name, $expected.ty, actual_type;
                         help = "Try using {} instead of {}", $expected.ty.inner_type(), get_type($ty).unwrap()
                     );
                 }
@@ -251,6 +256,7 @@ macro_rules! assert_type {
 enum RodExpr {
     Attribute(RodAttr),
     Check(RodCheck),
+    Message(RodMessage),
 }
 
 impl Parse for RodExpr {
@@ -258,6 +264,9 @@ impl Parse for RodExpr {
         if input.peek(Ident) && input.peek2(syn::Token![=]) {
             let rod_check: RodCheck = input.parse()?;
             Ok(RodExpr::Check(rod_check))
+        } else if input.peek(Ident) && input.peek2(syn::Token![:]) {
+            let rod_message: RodMessage = input.parse()?;
+            Ok(RodExpr::Message(rod_message))
         } else {
             let rod_attr: RodAttr = input.parse()?;
             Ok(RodExpr::Attribute(rod_attr))
@@ -271,7 +280,7 @@ struct RodAttr {
     span: proc_macro2::Span,
 }
 
-struct RodCheck{
+struct RodCheck {
     closure: ExprClosure,
     span: proc_macro2::Span,
 }
@@ -281,12 +290,17 @@ impl Parse for RodCheck {
         let ident = input.parse::<Ident>()?;
         if ident != "check" {
             abort!(
-                ident.span(), "Unknown attribute `{}`. Expected `check`", ident
+                ident.span(),
+                "Unknown attribute `{}`. Expected `check`",
+                ident
             )
         }
         input.parse::<syn::Token![=]>()?;
         let expr: ExprClosure = input.parse()?;
-        let span = ident.span().join(expr.span()).unwrap_or_else(|| proc_macro2::Span::call_site());
+        let span = ident
+            .span()
+            .join(expr.span())
+            .unwrap_or_else(|| proc_macro2::Span::call_site());
         if expr.inputs.len() != 1 {
             abort!(
                 expr.span(), "Expected a single argument for `check` closure, but found {} arguments",
@@ -298,6 +312,31 @@ impl Parse for RodCheck {
             closure: expr,
             span,
         })
+    }
+}
+
+struct RodMessage {
+    message: LitStr,
+    span: proc_macro2::Span,
+}
+
+impl Parse for RodMessage {
+    fn parse(input: ParseStream) -> SynResult<Self> {
+        let ident = input.parse::<Ident>()?;
+        if ident != "message" {
+            abort!(
+                ident.span(),
+                "Unknown attribute `{}`. Expected `message`",
+                ident
+            )
+        }
+        input.parse::<syn::Token![:]>()?;
+        let message: LitStr = input.parse()?;
+        let span = ident
+            .span()
+            .join(message.span())
+            .unwrap_or_else(|| proc_macro2::Span::call_site());
+        Ok(RodMessage { message, span })
     }
 }
 
@@ -413,7 +452,11 @@ macro_rules! impl_rod_types {
 
         impl Parse for RodAttr {
             fn parse(input: ParseStream) -> SynResult<Self> {
-                let ty: Type = input.parse()?;
+                let ty: Type = input.parse().unwrap_or_else(|_| {
+                    abort!(
+                        input.span(), "Expected a supported type, but found: {}", input
+                    );
+                });
                 let span = ty.span();
                 let rod_type: RodAttrType = ty.into();
                 #[allow(unreachable_patterns)]
@@ -500,6 +543,13 @@ macro_rules! rod_content_match {
             )*
         }
     };
+    ($content:expr, $field_access:expr, $wrap_return:expr, $custom_error:expr, [ $( $variant:ident ),* ]) => {
+        match $content {
+            $(
+                RodAttrContent::$variant(content) => content.get_validations_with_custom_error($field_access, $wrap_return, $custom_error),
+            )*
+        }
+    };
 }
 
 macro_rules!  get_field_validations {
@@ -512,6 +562,7 @@ macro_rules!  get_field_validations {
             if attr.path().is_ident("rod") {
                 let mut check_opt = None;
                 let mut rod_attr_opt = None;
+                let mut message_opt = None;
                 match attr.parse_args_with(syn::punctuated::Punctuated::<RodExpr, syn::Token![,]>::parse_terminated) {
                     Ok(exprlist) => {
                         for expr in exprlist {
@@ -534,24 +585,43 @@ macro_rules!  get_field_validations {
                                     }
                                     rod_attr_opt = Some(rod_attr);
                                 }
+                                RodExpr::Message(message) => {
+                                    if message_opt.is_some() {
+                                        abort!(
+                                            message.span, "Multiple `message` attributes found on field `{}`", $field_access;
+                                            help = "Remove the extra `message` attributes"
+                                        );
+                                    }
+                                    message_opt = Some(message);
+                                }
                             }
                         }
                     },
                     Err(e) => {
                         abort!(
-                            attr.span(), "Failed to parse attribute: {}", e
+                            e.span(), "Failed to parse attribute: {}", e
                         );
                     }
                 }
                 match rod_attr_opt {
                     Some(rod_attr) => {
                         assert_type!($field_access, &$field.ty, rod_attr);
-                        let validations_for_field = rod_content_match!(
-                            rod_attr.content,
-                            $field_access,
-                            $wrap_return,
-                            [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
-                        );
+                        let validations_for_field = if let Some(message) = message_opt.as_ref() {
+                            rod_content_match!(
+                                &rod_attr.content, 
+                                $field_access, 
+                                $wrap_return, 
+                                &message.message, 
+                                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
+                            )
+                        } else {
+                            rod_content_match!(
+                                &rod_attr.content, 
+                                $field_access, 
+                                $wrap_return, 
+                                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
+                            )
+                        };
                         let check = check_opt.map_or_else(|| quote! {}, |check| {
                             if matches!(rod_attr.ty, RodAttrType::Skip(_)) {
                                 abort!(
@@ -571,7 +641,12 @@ macro_rules!  get_field_validations {
                                 IsNestedReference::More => unreachable!(), // This should have been caught earlier
                             };
                             let path = $field_access.to_string();
-                            let ret = $wrap_return(quote! { RodValidateError::CheckFailed(#path) });
+                            let ret = if let Some(message) = message_opt.as_ref() {
+                                let msg = &message.message;
+                                $wrap_return(quote! { RodValidateError::UserDefined(#msg.to_string()) })
+                            } else {
+                                $wrap_return(quote! { RodValidateError::CheckFailed(#path) })
+                            };
                             let field_access = $field_access;
                             quote! {
                                 let check: fn(#field_type) -> bool = #closure;
@@ -617,10 +692,10 @@ macro_rules! check_valid_rod_type {
 ///
 /// Implements validation logic for struct fields annotated with `#[rod(...)]`.
 /// Fields without the attribute are required to implement `RodValidate`.
-/// Many standard types are supported, including [`RodStringContent`][crate::types::RodStringContent], [`RodIntegerContent`][crate::types::RodIntegerContent], [`RodLiteralContent`][crate::types::RodLiteralContent], [`RodBooleanContent`][crate::types::RodBooleanContent], and [`RodOptionContent`][crate::types::RodOptionContent]. 
+/// Many standard types are supported, including [`RodStringContent`][crate::types::RodStringContent], [`RodIntegerContent`][crate::types::RodIntegerContent], [`RodLiteralContent`][crate::types::RodLiteralContent], [`RodBooleanContent`][crate::types::RodBooleanContent], and [`RodOptionContent`][crate::types::RodOptionContent].
 /// To see the available attributes, refer to the documentation for each type.
 /// # Examples
-/// 
+///
 /// ```
 /// use rod::prelude::*;
 ///
@@ -640,12 +715,12 @@ macro_rules! check_valid_rod_type {
 ///     age: u8,
 /// }
 /// ```
-/// 
-/// 
+///
+///
 /// # Invalid Examples
-/// 
+///
 /// This example demonstrates a struct that does not implement `RodValidate`.
-/// 
+///
 /// ```compile_fail
 /// use rod::prelude::*;
 ///
@@ -692,7 +767,10 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let name = &ast.ident;
 
-    let get_validations = |wrap_validations: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream| -> proc_macro2::TokenStream {
+    let get_validations = |wrap_validations: fn(
+        proc_macro2::TokenStream,
+    ) -> proc_macro2::TokenStream|
+     -> proc_macro2::TokenStream {
         match &ast.data {
             Data::Struct(data_struct) => {
                 if let Fields::Named(fields_named) = &data_struct.fields {
@@ -744,7 +822,7 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
                 } else {
                     unreachable!()
                 }
-            },
+            }
             Data::Enum(data_enum) => {
                 let match_arms = data_enum.variants.iter().map(|variant| {
                     let variant_ident = &variant.ident;
@@ -847,7 +925,7 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
     });
 
     let all_validations = get_validations(|ret| {
-        quote!{
+        quote! {
             errors.push(#ret);
         }
     });
@@ -881,5 +959,3 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
     }
     .into()
 }
-
-

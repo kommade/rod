@@ -8,7 +8,7 @@ Procedural macro for the Rod Validation library. This crate provides the `#[deri
 
 ## Overview
 
-`rod_derive` is the procedural macro component of the Rod Validation framework. It automatically generates validation implementations for structs and enums based on declarative attributes.
+`rod_derive` is the procedural macro component of the Rod Validation framework. It automatically generates validation implementations for structs and enumerations based on declarative attributes.
 
 **This crate is typically used through the main `rod_validation` crate and not directly.**
 
@@ -18,7 +18,7 @@ Add Rod Validation to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rod_validation = "0.2.0"
+rod_validation = "0.2.2"
 ```
 
 The derive macro is available through the prelude:
@@ -47,6 +47,7 @@ This includes:
 - Compilation guarantees
 - Performance considerations
 - Advanced features
+- Per-validation custom error messages using the `? "message"` syntax
 - Limitations and troubleshooting
 
 ## Dependencies

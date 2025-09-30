@@ -21,6 +21,7 @@ macro_rules! rod_validation_types {
                 $tuple_name($mod_name::$type_name),
             )*
             CheckFailed(&'static str),
+            UserDefined(String),
         }
 
         impl Error for RodValidateError {}
@@ -34,6 +35,8 @@ macro_rules! rod_validation_types {
                     )*
                     RodValidateError::CheckFailed(path) => 
                         write!(f, "Custom validation check failed for `{}`", path),
+                    RodValidateError::UserDefined(msg) => 
+                        write!(f, "{}", msg),
                 }
             }
         }
@@ -62,6 +65,9 @@ macro_rules! rod_validation_types {
             pub fn len(&self) -> usize {
                 self.0.len()
             }
+            pub fn iter(&self) -> std::slice::Iter<'_, RodValidateError> {
+                self.0.iter()
+            }
         }
 
         impl Index<usize> for RodValidateErrorList {
@@ -79,6 +85,8 @@ macro_rules! rod_validation_types {
                 self.0.pop()
             }
         }
+
+
 
         impl Error for RodValidateErrorList {}
 
