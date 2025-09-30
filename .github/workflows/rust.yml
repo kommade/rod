@@ -102,4 +102,4 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_SECRET }}
         run: |
           # Publish the workspace package named `rod`. Adjust manifest-path if needed.
-          cargo publish -p rod
+          cargo publish -p rod_validation
