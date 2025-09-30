@@ -16,7 +16,7 @@ on:
     types: [opened, reopened, synchronize, ready_for_review]
   push:
     branches:
-      - main
+      - master
   workflow_dispatch:
 
 permissions:
@@ -62,7 +62,7 @@ jobs:
     # Only run publish on pushes to main (i.e., after a PR merge) and when secret exists.
     if: >
       github.event_name == 'push' &&
-      github.ref == 'refs/heads/main'
+      github.ref == 'refs/heads/master'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
