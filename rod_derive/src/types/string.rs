@@ -6,7 +6,7 @@ use syn::{parse::Parse, LitStr};
 use syn::Ident;
 
 
-use super::{optional_braced, LengthOrSize};
+use super::{optional_braced, user_defined_error, LengthOrSize};
 
 #[cfg(feature = "regex")]
 mod regex_literals {
@@ -111,12 +111,19 @@ pub struct RodStringContent {
     starts_with: Option<LitStr>,
     ends_with: Option<LitStr>,
     includes: Option<LitStr>,
+    custom_errors: [Option<LitStr>; 5], // length, format, starts_with, ends_with, includes
 }
 
 impl RodStringContent {
     pub(crate) fn get_validations(&self, field_name: &proc_macro2::Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let path = field_name.to_string();
-        let length_opt = self.length.as_ref().map(|length| length.validate_string(field_name, wrap_return));
+        let length_opt = self.length.as_ref().map(|length| {
+            if let Some(msg) = self.custom_errors[0].as_ref() {
+                length.validate_string_with_custom_error(field_name, wrap_return, msg)
+            } else {
+                length.validate_string(field_name, wrap_return)
+            }
+        });
         #[cfg(feature = "regex")]
         let format_opt = self.format.as_ref().map(|format| {
             let regex = match format {
@@ -128,10 +135,14 @@ impl RodStringContent {
                 StringFormat::Ipv6 => String::from(regex_literals::IPV6_REGEX),
                 StringFormat::DateTime => String::from(regex_literals::DATETIME_REGEX),
             };
-            let ret = wrap_return(quote!{ RodValidateError::String(StringValidation::Format(#path, name, #format)) });
+            let ret = if let Some(msg) = self.custom_errors[1].as_ref() {
+                user_defined_error(wrap_return, msg)
+            } else {
+                wrap_return(quote!{ RodValidateError::String(StringValidation::Format(#path, name, #format)) })
+            };
             quote! {
                 if !regex::Regex::new(#regex).unwrap().is_match(&#field_name) {
-                    let name = String::from(&#field_name);
+                    let name = String::from(#field_name);
                     #ret;
                 }
             }
@@ -139,7 +150,11 @@ impl RodStringContent {
         #[cfg(not(feature = "regex"))]
         let format_opt: Option<proc_macro2::TokenStream> = None;
         let starts_with_opt = self.starts_with.as_ref().map(|starts_with| {
-            let ret = wrap_return(quote!{ RodValidateError::String(StringValidation::StartsWith(#path, #field_name.clone().into(), #starts_with.into())) });
+            let ret = if let Some(msg) = self.custom_errors[2].as_ref() {
+                user_defined_error(wrap_return, msg)
+            } else {
+                wrap_return(quote!{ RodValidateError::String(StringValidation::StartsWith(#path, #field_name.clone().into(), #starts_with.into())) })
+            };
             quote! {
                 if !#field_name.starts_with(#starts_with) {
                     #ret;
@@ -147,7 +162,11 @@ impl RodStringContent {
             }
         });
         let ends_with_opt = self.ends_with.as_ref().map(|ends_with| {
-            let ret = wrap_return(quote!{ RodValidateError::String(StringValidation::EndsWith(#path, #field_name.clone().into(), #ends_with.into())) });
+            let ret = if let Some(msg) = self.custom_errors[3].as_ref() {
+                user_defined_error(wrap_return, msg)
+            } else {
+                wrap_return(quote!{ RodValidateError::String(StringValidation::EndsWith(#path, #field_name.clone().into(), #ends_with.into())) })
+            };
             quote! {
                 if !#field_name.ends_with(#ends_with) {
                     #ret;
@@ -155,7 +174,88 @@ impl RodStringContent {
             }
         });
         let includes_opt = self.includes.as_ref().map(|includes| {
-            let ret = wrap_return(quote!{ RodValidateError::String(StringValidation::Includes(#path, #field_name.clone().into(), #includes.into())) });
+            let ret = if let Some(msg) = self.custom_errors[4].as_ref() {
+                user_defined_error(wrap_return, msg)
+            } else {
+                wrap_return(quote!{ RodValidateError::String(StringValidation::Includes(#path, #field_name.clone().into(), #includes.into())) })
+            };
+            quote! {
+                if !#field_name.contains(#includes) {
+                    #ret;
+                }
+            }
+        });
+
+        quote! {
+            #length_opt
+            #format_opt
+            #starts_with_opt
+            #ends_with_opt
+            #includes_opt
+        }
+    }
+    pub(crate) fn get_validations_with_custom_error(&self, field_name: &proc_macro2::Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
+        let length_opt = self.length.as_ref().map(|length| {
+            if let Some(msg) = self.custom_errors[0].as_ref() {
+                length.validate_string_with_custom_error(field_name, wrap_return, msg)
+            } else {
+                length.validate_string_with_custom_error(field_name, wrap_return, custom_error)
+            }
+        });
+        #[cfg(feature = "regex")]
+        let format_opt = self.format.as_ref().map(|format| {
+            let regex = match format {
+                StringFormat::Regex(lit_str) => lit_str.value(),
+                StringFormat::Email => String::from(regex_literals::EMAIL_REGEX),
+                StringFormat::Url => String::from(regex_literals::URL_REGEX),
+                StringFormat::Uuid => String::from(regex_literals::UUID_REGEX),
+                StringFormat::Ipv4 => String::from(regex_literals::IPV4_REGEX),
+                StringFormat::Ipv6 => String::from(regex_literals::IPV6_REGEX),
+                StringFormat::DateTime => String::from(regex_literals::DATETIME_REGEX),
+            };
+            let ret = if let Some(msg) = self.custom_errors[1].as_ref() {
+                user_defined_error(wrap_return, msg)
+            } else {
+                user_defined_error(wrap_return, custom_error)
+            };
+            quote! {
+                if !regex::Regex::new(#regex).unwrap().is_match(&#field_name) {
+                    #ret;
+                }
+            }
+        });
+        #[cfg(not(feature = "regex"))]
+        let format_opt: Option<proc_macro2::TokenStream> = None;
+        let starts_with_opt = self.starts_with.as_ref().map(|starts_with| {
+            let ret = if let Some(msg) = self.custom_errors[2].as_ref() {
+                user_defined_error(wrap_return, msg)
+            } else {
+                user_defined_error(wrap_return, custom_error)
+            };
+            quote! {
+                if !#field_name.starts_with(#starts_with) {
+                    #ret;
+                }
+            }
+        });
+        let ends_with_opt = self.ends_with.as_ref().map(|ends_with| {
+            let ret = if let Some(msg) = self.custom_errors[3].as_ref() {
+                user_defined_error(wrap_return, msg)
+            } else {
+                user_defined_error(wrap_return, custom_error)
+            };
+            quote! {
+                if !#field_name.ends_with(#ends_with) {
+                    #ret;
+                }
+            }
+        });
+        let includes_opt = self.includes.as_ref().map(|includes| {
+            let ret = if let Some(msg) = self.custom_errors[4].as_ref() {
+                user_defined_error(wrap_return, msg)
+            } else {
+                user_defined_error(wrap_return, custom_error)
+            };
             quote! {
                 if !#field_name.contains(#includes) {
                     #ret;
@@ -184,6 +284,7 @@ impl Parse for RodStringContent {
                 starts_with: None,
                 ends_with: None,
                 includes: None,
+                custom_errors: [None, None, None, None, None],
             }),
         };
 
@@ -192,6 +293,8 @@ impl Parse for RodStringContent {
         let mut starts_with = None;
         let mut ends_with = None;
         let mut includes = None;
+        let mut message: Option<LitStr> = None;
+        let mut custom_errors: [Option<LitStr>; 5] = [None, None, None, None, None];
 
         while !inner.is_empty() {
             let lookahead = inner.lookahead1();
@@ -201,12 +304,18 @@ impl Parse for RodStringContent {
                     check_already_used_attr!(length, ident.span());
                     inner.parse::<syn::Token![:]>()?;
                     length = Some(inner.parse()?);
+                    if let Some(msg) = message.take() {
+                        custom_errors[0] = Some(msg);
+                    }
                 } else if ident == "format" {
                     #[cfg(feature = "regex")]
                     {
                         check_already_used_attr!(format, ident.span());
                         inner.parse::<syn::Token![:]>()?;
                         format = Some(inner.parse()?);
+                        if let Some(msg) = message.take() {
+                            custom_errors[1] = Some(msg);
+                        }
                     }
                     #[cfg(not(feature = "regex"))]
                     {
@@ -216,14 +325,23 @@ impl Parse for RodStringContent {
                     check_already_used_attr!(includes, ident.span());
                     inner.parse::<syn::Token![:]>()?;
                     includes = Some(inner.parse()?);
+                    if let Some(msg) = message.take() {
+                        custom_errors[4] = Some(msg);
+                    }
                 } else if ident == "starts_with" {
                     check_already_used_attr!(starts_with, ident.span());
                     inner.parse::<syn::Token![:]>()?;
                     starts_with = Some(inner.parse()?);
+                    if let Some(msg) = message.take() {
+                        custom_errors[2] = Some(msg);
+                    }
                 } else if ident == "ends_with" {
                     check_already_used_attr!(ends_with, ident.span());
                     inner.parse::<syn::Token![:]>()?;
                     ends_with = Some(inner.parse()?);
+                    if let Some(msg) = message.take() {
+                        custom_errors[3] = Some(msg);
+                    }
                 } else {
                     abort!(
                         ident.span(),
@@ -231,10 +349,16 @@ impl Parse for RodStringContent {
                     );
                 }
             } else {
-                abort!(
-                    inner.span(),
-                    "Expected an identifier"
-                );
+                if lookahead.peek(syn::Token![?]) {
+                    let _q: syn::Token![?] = inner.parse()?;
+                    let result: LitStr = inner.parse()?;
+                    message = Some(result);
+                } else {
+                    abort!(
+                        inner.span(),
+                        "Expected an identifier"
+                    );
+                }
             }
 
             _ = inner.parse::<syn::Token![,]>();
@@ -246,6 +370,7 @@ impl Parse for RodStringContent {
             starts_with,
             ends_with,
             includes,
+            custom_errors,
         })
     }
 }

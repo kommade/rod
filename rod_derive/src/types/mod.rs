@@ -1,5 +1,5 @@
 use proc_macro_error::abort;
-use syn::{parse::{Parse, ParseBuffer}, ExprRange, Ident, LitInt, Token};
+use syn::{parse::{Parse, ParseBuffer}, ExprRange, Ident, LitInt, LitStr, Token};
 use quote::{quote, ToTokens};
 
 macro_rules! check_already_used_attr {
@@ -59,6 +59,25 @@ impl LengthOrSize {
             }
         }
     }
+    pub (crate) fn validate_string_with_custom_error(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
+        let ret = user_defined_error(wrap_return, custom_error);
+        match self {
+            LengthOrSize::Exact(exact) => {
+                quote! {
+                    if #field_name.len() != #exact {
+                        #ret;
+                    }
+                }
+            }
+            LengthOrSize::Range(range) => {
+                quote! {
+                    if !(#range).contains(&#field_name.len()) {
+                        #ret;
+                    }
+                }
+            }
+        }
+    }
     pub(crate) fn validate_integer(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let path = field_name.to_string();
         match self {
@@ -76,6 +95,25 @@ impl LengthOrSize {
                 let ret = wrap_return(quote! {
                     RodValidateError::Integer(IntegerValidation::Size(#path, #field_name.clone().into(), format!("to be in the range {:?}", #range)))
                 });
+                quote! {
+                    if !(#range).contains(#field_name) {
+                        #ret;
+                    }
+                }
+            }
+        }
+    }
+    pub(crate) fn validate_integer_with_custom_error(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
+        let ret = user_defined_error(wrap_return, custom_error);
+        match self {
+            LengthOrSize::Exact(exact) => {
+                quote! {
+                    if #field_name != #exact {
+                        #ret;
+                    }
+                }
+            }
+            LengthOrSize::Range(range) => {
                 quote! {
                     if !(#range).contains(#field_name) {
                         #ret;
@@ -109,6 +147,25 @@ impl LengthOrSize {
             }
         }
     }
+    pub(crate) fn validate_float_with_custom_error(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
+        let ret = user_defined_error(wrap_return, custom_error);
+        match self {
+            LengthOrSize::Exact(exact) => {
+                quote! {
+                    if #field_name != #exact as f64 {
+                        #ret;
+                    }
+                }
+            }
+            LengthOrSize::Range(range) => {
+                quote! {
+                    if !(#range).contains(#field_name) {
+                        #ret;
+                    }
+                }
+            }
+        }
+    }
     pub(crate) fn validate_iterable(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let path = field_name.to_string();
         match self {
@@ -134,6 +191,35 @@ impl LengthOrSize {
             }
         }
     }
+    pub(crate) fn validate_iterable_with_custom_error(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
+        let ret = user_defined_error(wrap_return, custom_error);
+        match self {
+            LengthOrSize::Exact(exact) => {
+                quote! {
+                    if #field_name.len() != #exact {
+                        #ret;
+                    }
+                }
+            }
+            LengthOrSize::Range(range) => {
+                quote! {
+                    if !(#range).contains(&#field_name.len()) {
+                        #ret;
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn user_defined_error(
+    wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream,
+    message: &LitStr,
+) -> proc_macro2::TokenStream {
+    let msg = message.clone();
+    wrap_return(quote! {
+        RodValidateError::UserDefined(#msg.to_string())
+    })
 }
 
 /// `NumberSign` is an enum that represents the sign of an integer.

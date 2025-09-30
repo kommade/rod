@@ -1,8 +1,8 @@
 use proc_macro_error::abort;
-use syn::parse::Parse;
+use syn::{parse::Parse, LitStr};
 use quote::quote;
 
-use super::optional_braced;
+use super::{optional_braced, user_defined_error};
 
 pub struct CustomContent;
 
@@ -30,6 +30,15 @@ impl CustomContent {
                 for e in errs {
                     #ret;
                 }
+            }
+        }
+    }
+    pub(crate) fn get_validations_with_custom_error(&self, field_name: &syn::Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
+        let ret = user_defined_error(wrap_return, custom_error);
+        quote! {
+            let assert = assert_impl_rod_validate(#field_name);
+            if let Err(_errs) = assert {
+                #ret;
             }
         }
     }

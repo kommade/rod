@@ -1,8 +1,8 @@
 use proc_macro_error::abort;
-use syn::{parse::Parse, Ident, PatLit};
+use syn::{parse::Parse, Ident, LitStr, PatLit};
 use quote::quote;
 
-use super::optional_braced;
+use super::{optional_braced, user_defined_error};
 
 
 /// `RodLiteralContent` is a struct that represents the content of a literal field in a Rod entity.
@@ -29,6 +29,7 @@ use super::optional_braced;
 /// ```
 pub struct RodLiteralContent {
     value: PatLit,
+    custom_error: Option<LitStr>,
 }
 
 impl Parse for RodLiteralContent {
@@ -44,7 +45,9 @@ impl Parse for RodLiteralContent {
                 )
             }
         };
-        let mut value = None;
+    let mut value = None;
+    let mut message: Option<LitStr> = None;
+    let mut custom_error: Option<LitStr> = None;
         while !inner.is_empty() {
             let lookahead = inner.lookahead1();
             if lookahead.peek(syn::Ident) {
@@ -53,6 +56,9 @@ impl Parse for RodLiteralContent {
                     check_already_used_attr!(value, ident.span());
                     inner.parse::<syn::Token![:]>()?;
                     value = Some(inner.parse()?);
+                    if let Some(msg) = message.take() {
+                        custom_error = Some(msg);
+                    }
                 } else {
                     abort!(
                         ident.span(),
@@ -60,6 +66,10 @@ impl Parse for RodLiteralContent {
                     );
                 }
                 _ = inner.parse::<syn::Token![,]>();
+            } else if lookahead.peek(syn::Token![?]) {
+                let _q: syn::Token![?] = inner.parse()?;
+                let result: LitStr = inner.parse()?;
+                message = Some(result);
             } else {
                 abort!(
                     inner.span(),
@@ -68,7 +78,8 @@ impl Parse for RodLiteralContent {
             }
         }
         if let Some(value) = value {
-            Ok(RodLiteralContent { value })
+            let custom_error = custom_error.or(message);
+            Ok(RodLiteralContent { value, custom_error })
         } else {
             abort!(
                 input.span(),
@@ -83,9 +94,26 @@ impl RodLiteralContent {
     pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let path = field_name.to_string();
         let value = &self.value.lit;
-        let ret = wrap_return(quote! {
-            RodValidateError::Literal(LiteralValidation::Value(#path, #field_name.clone().to_string(), format!("to be {}", #value)))
-        });
+        let ret = if let Some(msg) = self.custom_error.as_ref() {
+            user_defined_error(wrap_return, msg)
+        } else {
+            wrap_return(quote! {
+                RodValidateError::Literal(LiteralValidation::Value(#path, #field_name.clone().to_string(), format!("to be {}", #value)))
+            })
+        };
+        quote! {
+            if #field_name.clone() != #value {
+                #ret;
+            }
+        }
+    }
+    pub(crate) fn get_validations_with_custom_error(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
+        let value = &self.value.lit;
+        let ret = if let Some(msg) = self.custom_error.as_ref() {
+            user_defined_error(wrap_return, msg)
+        } else {
+            user_defined_error(wrap_return, custom_error)
+        };
         quote! {
             if #field_name.clone() != #value {
                 #ret;

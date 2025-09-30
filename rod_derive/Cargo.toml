@@ -1,6 +1,6 @@
 [package]
 name = "rod_derive"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 authors = ["kommade"]
 description = "Procedural macro for the Rod Validation library"
