@@ -89,7 +89,26 @@ jobs:
           # The token is provided via env and masked in logs.
           echo "CARGO_REGISTRY_TOKEN configured (masked)."
 
+      - name: Check if rod_derive version changed
+        id: check-rod-derive
+        run: |
+          # Get the previous version from HEAD
+          OLD_VERSION=$(git show HEAD:rod_derive/Cargo.toml | grep '^version' | head -1 | sed 's/version *= *"\(.*\)"/\1/')
+          NEW_VERSION=$(grep '^version' rod_derive/Cargo.toml | head -1 | sed 's/version *= *"\(.*\)"/\1/')
+          
+          echo "Old version: $OLD_VERSION"
+          echo "New version: $NEW_VERSION"
+          
+          if [ "$OLD_VERSION" = "$NEW_VERSION" ]; then
+            echo "Version unchanged, skipping rod_derive publish"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Version changed, will publish rod_derive"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Publish `rod_derive` (cd into subdirectory then publish)
+        if: steps.check-rod-derive.outputs.skip != 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_SECRET }}
         run: |
