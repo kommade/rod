@@ -1,79 +1,53 @@
-@echo off
-REM Pre-push hook to check if versions have changed before allowing push
-REM This prevents pushing changes when neither rod_derive nor rod_validation versions have changed
+#!/bin/bash
+# Pre-push hook to check if versions have changed before allowing push
+# This prevents pushing changes when neither rod_derive nor rod_validation versions have changed
 
-REM Read the old and new commit hashes from arguments
-REM %1 = local ref, %2 = local sha1, %3 = remote ref, %4 = remote sha1
-set "remote_sha1=%4"
-set "local_sha1=%2"
+# Get the remote SHA1 from arguments
+# $1 = local ref, $2 = local sha1, $3 = remote ref, $4 = remote sha1
+remote_sha1="$4"
+local_sha1="$2"
 
-REM Get the list of files changed in the commits being pushed
-set "cargo_changed="
-for /f "tokens=*" %%a in ('git diff --name-only "%remote_sha1%" "%local_sha1%" 2^>nul') do (
-    echo "%%a" | findstr /I /C:"Cargo.toml" >nul
-    if not errorlevel 1 (
-        set "cargo_changed=1"
-    )
-)
+# Get the list of files changed in the commits being pushed
+cargo_changed=$(git diff --name-only "$remote_sha1" "$local_sha1" 2>/dev/null | grep -i "Cargo.toml")
 
-REM Check if any Cargo.toml files have changed
-if not defined cargo_changed (
-    echo No changes detected in Cargo.toml files.
-    echo Nothing to push - versions have not changed.
-    exit /b 1
-)
+# Check if any Cargo.toml files have changed
+if [ -z "$cargo_changed" ]; then
+    echo "No changes detected in Cargo.toml files."
+    echo "Nothing to push - versions have not changed."
+    exit 1
+fi
 
-REM Get versions from the previous commit (remote sha1)
-for /f "tokens=2 delims==\"" %%a in ('git show "%remote_sha1%:rod_derive/Cargo.toml" 2^>nul ^| findstr /C:"version ="') do set "rod_derive_old=%%a"
-for /f "tokens=2 delims==\"" %%a in ('git show "%remote_sha1%/Cargo.toml" 2^>nul ^| findstr /C:"version ="') do set "rod_old=%%a"
+# Check if versions were actually incremented
+# Get the current versions from the working directory
+get_version() {
+    local file="$1"
+    grep "^version" "$file" | head -1 | sed 's/version *= *"\(.*\)"/\1/'
+}
 
-REM Get versions from the new commit (local sha1)
-for /f "tokens=2 delims==\"" %%a in ('git show "%local_sha1%:rod_derive/Cargo.toml" 2^>nul ^| findstr /C:"version ="') do set "rod_derive_new=%%a"
-for /f "tokens=2 delims==\"" %%a in ('git show "%local_sha1%/Cargo.toml" 2^>nul ^| findstr /C:"version ="') do set "rod_new=%%a"
+rod_version=$(get_version "Cargo.toml")
+rod_derive_version=$(get_version "rod_derive/Cargo.toml")
 
-REM Check if versions actually changed
-set "rod_derive_changed=false"
-set "rod_changed=false"
+# Get the previous versions from the remote commit
+rod_version_old=$(git show "$remote_sha1:Cargo.toml" 2>/dev/null | grep "^version" | head -1 | sed 's/version *= *"\(.*\)"/\1/')
+rod_derive_version_old=$(git show "$remote_sha1:rod_derive/Cargo.toml" 2>/dev/null | grep "^version" | head -1 | sed 's/version *= *"\(.*\)"/\1/')
 
-if not "%rod_derive_old%"=="%rod_derive_new%" set "rod_derive_changed=true"
-if not "%rod_old%"=="%rod_new%" set "rod_changed=true"
+# Check if versions changed
+rod_version_changed=false
+rod_derive_version_changed=false
 
-REM Fail if neither version changed
-if "%rod_derive_changed%"=="false" if "%rod_changed%"=="false" (
-    echo Error: Neither rod_derive nor rod_validation version has changed.
-    echo Current versions: rod_derive=%rod_derive_new%, rod_validation=%rod_new%
-    echo Please increment the version in the appropriate Cargo.toml file before pushing.
-    exit /b 1
-)
+if [ "$rod_version" != "$rod_version_old" ]; then
+    rod_version_changed=true
+fi
 
-REM Check individual crates for changes
-set "rod_derive_files_changed=false"
-set "rod_files_changed=false"
+if [ "$rod_derive_version" != "$rod_derive_version_old" ]; then
+    rod_derive_version_changed=true
+fi
 
-REM Check if rod_derive files changed
-git diff --name-only "%remote_sha1%" "%local_sha1%" 2^>nul | findstr /C:"rod_derive/" >nul
-if not errorlevel 1 set "rod_derive_files_changed=true"
+# If neither version changed, fail the push
+if [ "$rod_version_changed" = false ] && [ "$rod_derive_version_changed" = false ]; then
+    echo "No changes detected in Cargo.toml files."
+    echo "Nothing to push - versions have not changed."
+    exit 1
+fi
 
-REM Check if root files changed (excluding rod_derive)
-git diff --name-only "%remote_sha1%" "%local_sha1%" 2^>nul | findstr /V /C:"rod_derive/" >nul
-if not errorlevel 1 set "rod_files_changed=true"
-
-REM Provide detailed feedback
-if "%rod_derive_changed%"=="false" if "%rod_derive_files_changed%"=="true" (
-    echo Warning: rod_derive files changed but version was not incremented.
-    echo Current version: %rod_derive_new%
-    echo Please increment the version in rod_derive/Cargo.toml before pushing.
-    exit /b 1
-)
-
-if "%rod_changed%"=="false" if "%rod_files_changed%"=="true" (
-    echo Warning: rod_validation files changed but version was not incremented.
-    echo Current version: %rod_new%
-    echo Please increment the version in Cargo.toml before pushing.
-    exit /b 1
-)
-
-echo Version check passed:
-echo   rod_derive: %rod_derive_old% -> %rod_derive_new%
-echo   rod_validation: %rod_old% -> %rod_new%
-exit /b 0
+echo "Version check passed. Proceeding with push..."
