@@ -6,12 +6,12 @@ use syn::{parse::Parse, LitStr};
 use syn::Ident;
 
 
-use super::{optional_braced, user_defined_error, LengthOrSize};
+use super::{optional_braced, user_defined_error, LengthOrSize, STRING_VALIDATION_FIELDS};
 
 #[cfg(feature = "regex")]
 mod regex_literals {
     pub(crate) const EMAIL_REGEX: &str = r#"(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|"(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21\x23-\x5b\x5d-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])*")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\[(?:(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9]))\.){3}(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9])|[a-z0-9-]*[a-z0-9]:(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21-\x5a\x53-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])+)\])"#;
-    pub(crate) const URL_REGEX: &str = r#"^[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)$"#;
+    pub(crate) const URL_REGEX: &str = r#"(?:https?://)?(?:www\.)?[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+(?:/[^\s]*)?"#;
     pub(crate) const UUID_REGEX: &str = r#"(?i:^[0-9a-f]{8}-[0-9a-f]{4}-[0-5][0-9a-f]{3}-[089ab][0-9a-f]{3}-[0-9a-f]{12}$)"#;
     pub(crate) const IPV4_REGEX: &str = r#"^(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"#;
     pub(crate) const IPV6_REGEX: &str = r#"^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$"#;
@@ -107,11 +107,12 @@ impl Parse for StringFormat {
 /// 
 pub struct RodStringContent {
     length: Option<LengthOrSize>,
+    #[cfg(feature = "regex")]
     format: Option<StringFormat>,
     starts_with: Option<LitStr>,
     ends_with: Option<LitStr>,
     includes: Option<LitStr>,
-    custom_errors: [Option<LitStr>; 5], // length, format, starts_with, ends_with, includes
+    custom_errors: [Option<LitStr>; STRING_VALIDATION_FIELDS], // length, format, starts_with, ends_with, includes
 }
 
 impl RodStringContent {
@@ -280,6 +281,7 @@ impl Parse for RodStringContent {
             Some(buffer) => buffer,
             None => return Ok(RodStringContent {
                 length: None,
+                #[cfg(feature = "regex")]
                 format: None,
                 starts_with: None,
                 ends_with: None,
@@ -289,12 +291,13 @@ impl Parse for RodStringContent {
         };
 
         let mut length = None;
+        #[cfg(feature = "regex")]
         let mut format = None;
         let mut starts_with = None;
         let mut ends_with = None;
         let mut includes = None;
         let mut message: Option<LitStr> = None;
-        let mut custom_errors: [Option<LitStr>; 5] = [None, None, None, None, None];
+        let mut custom_errors: [Option<LitStr>; STRING_VALIDATION_FIELDS] = [None, None, None, None, None];
 
         while !inner.is_empty() {
             let lookahead = inner.lookahead1();
@@ -364,13 +367,25 @@ impl Parse for RodStringContent {
             _ = inner.parse::<syn::Token![,]>();
         }
 
-        Ok(RodStringContent { 
+        #[cfg(feature = "regex")]
+        let result = RodStringContent { 
             length, 
             format,
             starts_with,
             ends_with,
             includes,
             custom_errors,
-        })
+        };
+
+        #[cfg(not(feature = "regex"))]
+        let result = RodStringContent { 
+            length, 
+            starts_with,
+            ends_with,
+            includes,
+            custom_errors,
+        };
+
+        Ok(result)
     }
 }

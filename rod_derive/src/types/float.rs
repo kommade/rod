@@ -3,7 +3,7 @@ use syn::{parse::Parse, Ident, LitStr};
 use quote::{quote, ToTokens};
 
 
-use super::{optional_braced, user_defined_error, LengthOrSize, NumberSign};
+use super::{optional_braced, user_defined_error, LengthOrSize, NumberSign, FLOAT_VALIDATION_FIELDS};
 
 enum FloatType {
     Nan,
@@ -58,13 +58,13 @@ impl ToTokens for FloatType {
 /// #[derive(RodValidate)]
 /// struct MyEntity {
 ///    #[rod(
-///         i32 {
+///         f64 {
 ///             size: 1.0..=10.0, // or size: 6.0
 ///             sign: Positive,
 ///             ftype: Finite,
 ///         }
 ///     )]
-///     my_float: i32,
+///     my_float: f64,
 /// }
 /// 
 /// let entity = MyEntity { my_float: 6.0 };
@@ -204,7 +204,7 @@ impl Parse for RodFloatContent {
         let mut sign = None;
         let mut r#type = None;
         let mut message: Option<LitStr> = None;
-        let mut custom_errors: [Option<LitStr>; 3] = [None, None, None];
+        let mut custom_errors: [Option<LitStr>; FLOAT_VALIDATION_FIELDS] = [None, None, None];
         while !inner.is_empty() {
             let lookahead = inner.lookahead1();
             if lookahead.peek(syn::Ident) {

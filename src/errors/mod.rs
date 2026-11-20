@@ -53,18 +53,23 @@ macro_rules! rod_validation_types {
         }
 
         impl RodValidateErrorList {
+            /// Creates a new empty error list.
             pub fn new() -> Self {
                 RodValidateErrorList(Vec::new())
             }
+            /// Pushes an error to the list.
             pub fn push(&mut self, error: RodValidateError) {
                 self.0.push(error);
             }
+            /// Returns true if the list is empty.
             pub fn is_empty(&self) -> bool {
                 self.0.is_empty()
             }
+            /// Returns the number of errors in the list.
             pub fn len(&self) -> usize {
                 self.0.len()
             }
+            /// Returns an iterator over the errors without consuming the list.
             pub fn iter(&self) -> std::slice::Iter<'_, RodValidateError> {
                 self.0.iter()
             }
@@ -78,6 +83,8 @@ macro_rules! rod_validation_types {
             }
         }
 
+        /// An iterator over the validation errors that consumes the list.
+        /// Each call to `next` removes and returns the last error from the list.
         impl Iterator for RodValidateErrorList {
             type Item = RodValidateError;
 

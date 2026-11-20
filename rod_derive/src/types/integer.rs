@@ -3,7 +3,7 @@ use syn::{parse::Parse, Ident, LitInt, LitStr};
 use quote::quote;
 
 
-use super::{optional_braced, user_defined_error, LengthOrSize, NumberSign};
+use super::{optional_braced, user_defined_error, LengthOrSize, NumberSign, INTEGER_VALIDATION_FIELDS};
 
 /// `RodIntegerContent` is a struct that represents the content of an integer field in a Rod entity.
 /// It is used to parse and validate integer attributes in the `#[rod]` attribute macro.
@@ -153,7 +153,7 @@ impl Parse for RodIntegerContent {
         let mut sign = None;
         let mut step = None;
         let mut message: Option<LitStr> = None;
-        let mut custom_errors: [Option<LitStr>; 3] = [None, None, None]; // size, sign, step
+        let mut custom_errors: [Option<LitStr>; INTEGER_VALIDATION_FIELDS] = [None, None, None]; // size, sign, step
         while !inner.is_empty() {
             let lookahead = inner.lookahead1();
             if lookahead.peek(Ident) {

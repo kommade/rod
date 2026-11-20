@@ -100,7 +100,7 @@ dependencies = [
 
 [[package]]
 name = "rod_validation"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "regex",
  "rod_derive",
