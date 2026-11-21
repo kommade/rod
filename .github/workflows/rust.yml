@@ -127,7 +127,7 @@ jobs:
         if: steps.check-versions.outputs.skip_derive != 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_SECRET }}
-        run: cargo publish --manifest-path rod_derive/Cargo.toml
+        run: cargo publish --manifest-path rod_derive/Cargo.toml --allow-dirty
 
       - name: Publish `rod_validation` (waits for rod_derive to propagate)
         # The registry is eventually consistent: right after publishing
@@ -138,7 +138,7 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_SECRET }}
         run: |
           for attempt in 1 2 3; do
-            if cargo publish -p rod_validation; then
+            if cargo publish -p rod_validation --allow-dirty; then
               exit 0
             fi
             echo "Attempt $attempt failed; the registry may not know rod_derive yet. Retrying in 15s..."

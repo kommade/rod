@@ -1,9 +1,13 @@
 #!/bin/bash
 # Pre-push version-check hook.
 #
-# Rule: the crate versions being pushed must differ from origin/master's
-# versions. Bump rod_validation and/or rod_derive (semver) before pushing;
-# otherwise the push is rejected.
+# Rule: for pushes that touch a Cargo.toml, the crate versions must differ
+# from origin/master's versions. Bump rod_validation and/or rod_derive
+# (semver) before pushing; otherwise the push is rejected.
+#
+# Exemption: pushes that do NOT modify any Cargo.toml (docs, CI, tests, raw
+# source fixes) pass without a bump - otherwise CI adjustments to master
+# would be impossible without semver noise.
 #
 # Why compare against origin/master (instead of the destination ref)?
 # 1. For brand-new remote branches git reports an all-zeros remote OID, which
@@ -45,6 +49,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 
     # No master ref available locally: cannot compare, allow the push.
     if [ -z "$master_ref" ]; then
+        continue
+    fi
+
+    # The bump rule only applies when a Cargo.toml actually changed.
+    if [ -z "$(git diff --name-only "$master_ref" "$local_sha" -- '*Cargo.toml')" ]; then
         continue
     fi
 
