@@ -10,7 +10,7 @@ use super::{optional_braced, user_defined_error, LengthOrSize, NumberSign, INTEG
 /// This struct includes optional fields for size, sign, and step, which are used in validation checks.
 /// # Attributes
 /// - `size`: An optional attribute that specifies a range for the integer to be in, or an exact value for the integer.
-/// - `sign`: An optional attribute that specifies the sign of the integer, see [`NumberSign`][crate::types::NumberSign] enum.
+/// - `sign`: An optional attribute that specifies the sign of the integer. Valid values are: `Positive`, `Negative`, `NonPositive`, `NonNegative`.
 /// - `step`: An optional attribute that specifies that the integer must be a multiple of this value.
 /// # Usage
 /// ```

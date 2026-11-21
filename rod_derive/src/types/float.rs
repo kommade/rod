@@ -49,8 +49,8 @@ impl ToTokens for FloatType {
 /// This struct includes optional fields for size, sign, and type, which are used in validation checks.
 /// # Attributes
 /// - `size`: An optional attribute that specifies the a range for the float to be in, or an exact value for the float.
-/// - `sign`: An optional attribute that specifies the sign of the float, see [`NumberSign`][crate::types::NumberSign] enum.
-/// - `ftype`: An optional attribute that specifies the type of the float, see [`FloatType`][crate::types::float::FloatType] enum.
+/// - `sign`: An optional attribute that specifies the sign of the float. Valid values are: `Positive`, `Negative`, `NonPositive`, `NonNegative`.
+/// - `ftype`: An optional attribute that specifies the type of the float. Valid values are: `NaN`, `Finite`, `Infinite`, `Normal`, `Subnormal`.
 /// # Usage
 /// ```
 /// use rod::prelude::*;

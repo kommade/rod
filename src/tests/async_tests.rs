@@ -201,3 +201,34 @@ fn run_async_checks_default_has_no_errors() {
     assert!(block_on(plain.run_async_checks()).is_empty());
     assert!(block_on(plain.validate_async()).is_ok());
 }
+
+#[test]
+fn double_reference_async_check() {
+    static TOKEN: &str = "tok123";
+
+    #[derive(RodValidate)]
+    struct Session {
+        #[rod(
+            str {
+                length: 3..=12,
+            },
+            async_check = |t: &str| std::future::ready(t.starts_with("tok"))
+        )]
+        token: &'static &'static str,
+    }
+
+    // Sync and async checks both see the innermost `&str`.
+    let ok = Session { token: &TOKEN };
+    assert!(ok.validate().is_ok(), "{}", ok.validate().unwrap_err());
+    assert!(block_on(ok.validate_async()).is_ok(), "{}", block_on(ok.validate_async()).unwrap_err());
+
+    static BAD: &str = "zzz456";
+    let bad = Session { token: &BAD };
+    // Sync rule passes (length 6), async check rejects the prefix.
+    assert!(bad.validate().is_ok());
+    let errors = block_on(bad.validate_async()).unwrap_err();
+    assert_eq!(errors.len(), 1, "{}", errors);
+    assert!(errors
+        .iter()
+        .any(|e| matches!(e, RodValidateError::CheckFailed(path) if *path == "token")), "{}", errors);
+}

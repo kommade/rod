@@ -82,7 +82,7 @@ impl Parse for StringFormat {
 /// which are used in validation checks.
 /// # Attributes
 /// - `length`: An optional attribute that specifies the length of the string.
-/// - `format`: An optional attribute that specifies the format of the string, such as email, URL, UUID, or any custom regex. See [`StringFormat`][crate::types::string::StringFormat] enum. Note that this attribute requires the `regex` feature to be enabled.
+/// - `format`: An optional attribute that specifies the format of the string. Valid values are: `Email`, `Url`, `Uuid`, `Ipv4`, `Ipv6`, `DateTime`, or a custom regex string literal. Note that this attribute requires the `regex` feature to be enabled.
 /// - `starts_with`: An optional attribute that specifies the string must start with this value.
 /// - `ends_with`: An optional attribute that specifies the string must end with this value.
 /// - `includes`: An optional attribute that specifies the string must include this value.

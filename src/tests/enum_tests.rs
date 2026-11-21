@@ -89,3 +89,36 @@ fn test_enum_with_reference() {
     let test = TestEnum::Second(5, "1234");
     assert!(test.validate().is_err(), "{}", test.validate().unwrap_err());
 }
+
+#[test]
+fn test_enum_double_reference() {
+    static TEXT: &str = "12345";
+
+    #[derive(RodValidate)]
+    enum Refs {
+        Named {
+            #[rod(
+                str {
+                    length: 5,
+                }
+            )]
+            text: &'static &'static str,
+        },
+        Seq(#[rod(str { length: 5 })] &'static &'static str),
+        Empty,
+    }
+
+    // Pattern bindings add one reference layer (`&&&str`); the derive peels
+    // down to `&str` before running the checks.
+    let test = Refs::Named { text: &TEXT };
+    assert!(test.validate().is_ok(), "{}", test.validate().unwrap_err());
+    let test = Refs::Seq(&TEXT);
+    assert!(test.validate().is_ok(), "{}", test.validate().unwrap_err());
+    assert!(Refs::Empty.validate().is_ok());
+
+    static BAD: &str = "1234";
+    let test = Refs::Named { text: &BAD };
+    assert!(test.validate().is_err());
+    let test = Refs::Seq(&BAD);
+    assert!(test.validate().is_err());
+}

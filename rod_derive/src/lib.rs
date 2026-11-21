@@ -44,23 +44,78 @@ fn get_type(ty: &Type) -> Option<TypeEnum> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-enum IsNestedReference {
-    None,
-    Single,
-    More,
+/// Number of `&` layers wrapping the innermost type of `ty`. Any depth is
+/// supported: bindings are normalized to a single reference before checks run.
+fn reference_depth(ty: &Type) -> usize {
+    let mut depth = 0;
+    let mut current = ty;
+    while let Type::Reference(type_ref) = current {
+        depth += 1;
+        current = type_ref.elem.as_ref();
+    }
+    depth
 }
 
-fn type_is_nested_reference(ty: &Type) -> IsNestedReference {
+/// The type underneath all reference layers (`&&&T` -> `T`).
+fn innermost_type(ty: &Type) -> Type {
     match ty {
-        Type::Reference(type_ref) => {
-            if let Type::Reference(_) = type_ref.elem.as_ref() {
-                IsNestedReference::More
-            } else {
-                IsNestedReference::Single
-            }
+        Type::Reference(type_ref) => innermost_type(type_ref.elem.as_ref()),
+        other => other.clone(),
+    }
+}
+
+/// A one-reference type expression for the innermost type (`&&str` -> `&str`).
+/// This is the type every generated check (and custom closure) receives.
+fn single_ref_type(ty: &Type) -> Type {
+    syn::Type::Reference(syn::TypeReference {
+        and_token: Default::default(),
+        lifetime: None,
+        mutability: None,
+        elem: Box::new(innermost_type(ty)),
+    })
+}
+
+/// A `**...*` dereference prefix peeling `count` reference layers.
+fn deref_prefix(count: usize) -> proc_macro2::TokenStream {
+    let mut stars = proc_macro2::TokenStream::new();
+    for _ in 0..count {
+        stars.extend(std::iter::once(proc_macro2::TokenTree::Punct(
+            proc_macro2::Punct::new('*', proc_macro2::Spacing::Joint),
+        )));
+    }
+    stars
+}
+
+/// Struct-style binding for a field access, normalized so that `access` has
+/// type `&T_inner` regardless of how many references wrap the field:
+/// `T` -> `&self.field`, `&T` (or `&&T`, `&&&T`, ...) -> peels down to `&T`.
+/// Peeling is always possible because `&T: Copy` for every `T`.
+fn struct_field_binding(access: &Ident, field: &syn::Field) -> proc_macro2::TokenStream {
+    let depth = reference_depth(&field.ty);
+    if depth == 0 {
+        quote! {
+            let #access = &self.#access;
         }
-        _ => IsNestedReference::None,
+    } else {
+        let stars = deref_prefix(depth - 1);
+        quote! {
+            let #access = #stars self.#access;
+        }
+    }
+}
+
+/// Enum pattern bindings add one reference layer (default binding modes), so
+/// a field of type `&&T` arrives as `&&&T`. Rebind with `depth` peels to
+/// normalize to `&T_inner`. Returns empty tokens when no peeling is needed.
+fn enum_field_binding(access: &Ident, field: &syn::Field) -> proc_macro2::TokenStream {
+    let depth = reference_depth(&field.ty);
+    if depth == 0 {
+        quote! {}
+    } else {
+        let stars = deref_prefix(depth);
+        quote! {
+            let #access = #stars #access;
+        }
     }
 }
 
@@ -421,18 +476,7 @@ fn build_async_checks_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
                     continue;
                 }
                 let access = field.ident.as_ref().unwrap();
-                let pre_bind = match type_is_nested_reference(&field.ty) {
-                    IsNestedReference::None => quote! {
-                        let #access = &self.#access;
-                    },
-                    IsNestedReference::Single => quote! {
-                        let #access = self.#access;
-                    },
-                    IsNestedReference::More => abort!(
-                        field.ty.span(), "Field `{}` is a reference to a reference, which is not supported.", access;
-                        help = "Use a single reference instead, e.g. `&T` instead of `&&T`."
-                    ),
-                };
+                let pre_bind = struct_field_binding(access, field);
                 let mut field_checks = quote! {};
                 for closure in &checks {
                     field_checks.extend(async_check_tokens(access, closure, message.as_ref()));
@@ -453,6 +497,7 @@ fn build_async_checks_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
                                 continue;
                             }
                             let access = field.ident.as_ref().unwrap();
+                            checks.extend(enum_field_binding(access, field));
                             for closure in &closures {
                                 checks.extend(async_check_tokens(access, closure, message.as_ref()));
                             }
@@ -470,6 +515,7 @@ fn build_async_checks_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
                                 continue;
                             }
                             let access = &bindings[idx];
+                            checks.extend(enum_field_binding(access, field));
                             for closure in &closures {
                                 checks.extend(async_check_tokens(access, closure, message.as_ref()));
                             }
@@ -966,16 +1012,7 @@ macro_rules!  get_field_validations {
                                 );
                             }
                             let closure = &check.closure;
-                            let ty = &$field.ty;
-                            let field_type = match type_is_nested_reference(ty) {
-                                IsNestedReference::None => quote! {
-                                    &#ty
-                                },
-                                IsNestedReference::Single => quote! {
-                                    #ty
-                                },
-                                IsNestedReference::More => unreachable!(), // This should have been caught earlier
-                            };
+                            let field_type = single_ref_type(&$field.ty);
                             let path = $field_access.to_string();
                             let ret = if let Some(message) = message_opt.as_ref() {
                                 let msg = &message.message;
@@ -1008,16 +1045,7 @@ macro_rules!  get_field_validations {
                                 attr.span(), "Failed to parse attribute",
                             );
                         }
-                        let field_ty = &$field.ty;
-                        let field_type = match type_is_nested_reference(field_ty) {
-                            IsNestedReference::None => quote! {
-                                &#field_ty
-                            },
-                            IsNestedReference::Single => quote! {
-                                #field_ty
-                            },
-                            IsNestedReference::More => unreachable!(), // Aborted earlier
-                        };
+                        let field_type = single_ref_type(&$field.ty);
                         let field_access = $field_access;
                         let path = field_access.to_string();
                         let ret = $wrap_return(quote! { e });
@@ -1070,90 +1098,6 @@ macro_rules! check_valid_rod_type {
     };
 }
 
-/// Derives the `RodValidate` trait for a struct.
-///
-/// Implements validation logic for struct fields annotated with `#[rod(...)]`.
-/// Fields without the attribute are required to implement `RodValidate`.
-/// Many standard types are supported, including [`RodStringContent`][crate::types::RodStringContent], [`RodIntegerContent`][crate::types::RodIntegerContent], [`RodLiteralContent`][crate::types::RodLiteralContent], [`RodBooleanContent`][crate::types::RodBooleanContent], and [`RodOptionContent`][crate::types::RodOptionContent].
-/// To see the available attributes, refer to the documentation for each type.
-/// # Examples
-///
-/// ```
-/// use rod::prelude::*;
-///
-/// #[derive(RodValidate)]
-/// struct User {
-///     #[rod(
-///         String {
-///             length: 3..=12, // Length between 3 and 12 characters
-///         }
-///     )]
-///     username: String,
-///     #[rod(
-///         u8 {
-///             size: 18..=99, // Age between 18 and 99
-///         }
-///     )]
-///     age: u8,
-/// }
-/// ```
-///
-///
-/// # Invalid Examples
-///
-/// This example demonstrates a struct that does not implement `RodValidate`.
-///
-/// ```compile_fail
-/// use rod::prelude::*;
-///
-/// struct DoesNotImplementRodValidate {
-///     field: String,
-/// }
-///
-/// #[derive(RodValidate)] // This will fail to compile
-/// struct Test {
-///     #[rod(
-///         String {
-///             length: 5..=10,
-///         }
-///     )]
-///     field1: String,
-///     field2: DoesNotImplementRodValidate, // This field does not implement RodValidate
-/// }
-/// ```
-/// # Custom Validations
-/// You can also define custom validations using the `check` attribute. Use a closure to define the validation logic.
-/// The closure should take a single argument, which is the field value, and return a boolean indicating whether the validation passed or failed.
-/// ```
-/// use rod::prelude::*;
-/// #[derive(RodValidate)]
-/// struct MyEntity {
-///    #[rod(
-///        String {
-///            length: 5..=10,
-///        },
-///        check = |s| {
-///           s.chars().all(|c| c.is_alphanumeric())
-///        }
-///     )]
-///     my_string: String,
-/// }
-/// let entity = MyEntity {
-///     my_string: "Hello123".to_string(),
-/// };
-/// assert!(entity.validate().is_ok());
-/// ```
-/// # Validation groups
-/// Fields can be tagged with `#[rod(group = "name")]` and validated
-/// selectively with `RodValidate::validate_group`.
-/// # JSON Schema
-/// With the `serde` feature enabled (in both this crate and yours), the derive
-/// also generates a `ToJsonSchema` implementation describing the field rules.
-/// Generates the code for a single field. `pre_bind` injects the struct-style
-/// `let field = &self.field;` binding (empty for enum arms where the match
-/// pattern provides the binding). When `guard` is set and the field carries
-/// `#[rod(group = "...")]`, the code is wrapped in a `if rod_group == "..."`.
-#[allow(clippy::too_many_arguments)]
 fn field_body(
     field: &syn::Field,
     access: &Ident,
@@ -1161,16 +1105,6 @@ fn field_body(
     wrap_validations: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream,
     guard: bool,
 ) -> proc_macro2::TokenStream {
-    // If the field is a reference to a reference, we cannot validate it directly
-    // because it would require dereferencing, which would require the type to be `Copy` or `Deref`.
-    // Maybe we should allow this in the future, but for now we just abort.
-    if type_is_nested_reference(&field.ty) == IsNestedReference::More {
-        abort!(
-            field.ty.span(), "Field `{}` is a reference to a reference, which is not supported.", access;
-            help = "Use a single reference instead, e.g. `&T` instead of `&&T`."
-        )
-    }
-
     // If no attributes are present, we assume it's a custom type that implements `RodValidate`
     // If a custom type appears inside a Rod type, it has to be explicitly annotated with `#[rod(...CustomType...)]`
     // The name of the custom type and the annotation must match
@@ -1215,16 +1149,7 @@ fn build_validation_code(
             if let Fields::Named(fields_named) = &data_struct.fields {
                 fields_named.named.iter().map(|field| {
                     let access = field.ident.as_ref().unwrap();
-                    let pre_bind = match type_is_nested_reference(&field.ty) {
-                        IsNestedReference::None => quote! {
-                            let #access = &self.#access;
-                        },
-                        IsNestedReference::Single => quote! {
-                            let #access = self.#access;
-                        },
-                        // Aborted inside `field_body` anyway
-                        IsNestedReference::More => unreachable!(),
-                    };
+                    let pre_bind = struct_field_binding(access, field);
                     field_body(field, access, pre_bind, wrap_validations, guard)
                 }).collect()
             } else {
@@ -1237,8 +1162,10 @@ fn build_validation_code(
                 let body: proc_macro2::TokenStream = match &variant.fields {
                     Fields::Named(fields_named) => fields_named.named.iter().map(|field| {
                         let access = field.ident.as_ref().unwrap();
-                        // Match patterns bind by value; no pre-bind needed.
-                        field_body(field, access, quote! {}, wrap_validations, guard)
+                        // Peel the extra reference layer added by the match
+                        // pattern binding so checks see `&T_inner`.
+                        let pre_bind = enum_field_binding(access, field);
+                        field_body(field, access, pre_bind, wrap_validations, guard)
                     }).collect(),
                     Fields::Unnamed(fields_unnamed) => {
                         let field_count = fields_unnamed.unnamed.len();
@@ -1247,7 +1174,8 @@ fn build_validation_code(
                             .collect();
                         fields_unnamed.unnamed.iter().enumerate().map(|(idx, field)| {
                             let access = &field_idents[idx];
-                            field_body(field, access, quote! {}, wrap_validations, guard)
+                            let pre_bind = enum_field_binding(access, field);
+                            field_body(field, access, pre_bind, wrap_validations, guard)
                         }).collect()
                     }
                     Fields::Unit => quote! {},
@@ -1365,6 +1293,107 @@ fn build_meta_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
     }
 }
 
+/// Derives the `RodValidate` trait for a struct.
+///
+/// Implements validation logic for struct fields annotated with `#[rod(...)]`.
+/// Fields without the attribute are required to implement `RodValidate` themselves.
+///
+/// The following built-in validation types are supported (the keyword must
+/// match the field's Rust type):
+///
+/// - **Strings** — `String`, `str`, `OsString`, `OsStr`, `PathBuf`, `Path`,
+///   `Cow`: attributes `length` (exact or range), `format` (requires the
+///   `regex` feature), `starts_with`, `ends_with`, `includes`
+/// - **Integers** — `i8`–`i128`, `isize`, `u8`–`u128`, `usize`: attributes
+///   `size` (exact or range), `sign`, `step`
+/// - **Floats** — `f32`, `f64`: attributes `size`, `sign`, `ftype`
+/// - **Booleans** — `bool` (no attributes; use `Literal` to assert a value)
+/// - **Options** — `Option<T>` wrapping an inner rule, or `Option {}` to
+///   require `None`
+/// - **Tuples** — `(T1, T2, ...)` with one rule per element
+/// - **Iterables** — `Iterable { item: ..., length: ... }` for `Vec` and friends
+/// - **Literals** — `Literal { value: ... }` compares against any literal
+/// - **Skip** — `#[rod(skip)]` excludes a field from validation
+///
+/// Any other type is treated as a custom type and must implement
+/// `RodValidate`.
+/// # Examples
+///
+/// ```
+/// use rod::prelude::*;
+///
+/// #[derive(RodValidate)]
+/// struct User {
+///     #[rod(
+///         String {
+///             length: 3..=12, // Length between 3 and 12 characters
+///         }
+///     )]
+///     username: String,
+///     #[rod(
+///         u8 {
+///             size: 18..=99, // Age between 18 and 99
+///         }
+///     )]
+///     age: u8,
+/// }
+/// ```
+///
+///
+/// # Invalid Examples
+///
+/// This example demonstrates a struct that does not implement `RodValidate`.
+///
+/// ```compile_fail
+/// use rod::prelude::*;
+///
+/// struct DoesNotImplementRodValidate {
+///     field: String,
+/// }
+///
+/// #[derive(RodValidate)] // This will fail to compile
+/// struct Test {
+///     #[rod(
+///         String {
+///             length: 5..=10,
+///         }
+///     )]
+///     field1: String,
+///     field2: DoesNotImplementRodValidate, // This field does not implement RodValidate
+/// }
+/// ```
+/// # Custom Validations
+/// You can also define custom validations using the `check` attribute. Use a closure to define the validation logic.
+/// The closure should take a single argument, which is the field value, and return a boolean indicating whether the validation passed or failed.
+/// ```
+/// use rod::prelude::*;
+/// #[derive(RodValidate)]
+/// struct MyEntity {
+///    #[rod(
+///        String {
+///            length: 5..=10,
+///        },
+///        check = |s| {
+///           s.chars().all(|c| c.is_alphanumeric())
+///        }
+///     )]
+///     my_string: String,
+/// }
+/// let entity = MyEntity {
+///     my_string: "Hello123".to_string(),
+/// };
+/// assert!(entity.validate().is_ok());
+/// ```
+/// # Validation groups
+/// Fields can be tagged with `#[rod(group = "name")]` and validated
+/// selectively with `RodValidate::validate_group`.
+/// # JSON Schema
+/// With the `serde` feature enabled (in both this crate and yours), the derive
+/// also generates a `ToJsonSchema` implementation describing the field rules.
+/// Generates the code for a single field. `pre_bind` injects the struct-style
+/// `let field = &self.field;` binding (empty for enum arms where the match
+/// pattern provides the binding). When `guard` is set and the field carries
+/// `#[rod(group = "...")]`, the code is wrapped in a `if rod_group == "..."`.
 #[proc_macro_error]
 #[proc_macro_derive(RodValidate, attributes(rod))]
 pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
