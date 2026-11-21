@@ -520,7 +520,7 @@ With the `serde` feature, the derive also generates a `ToJsonSchema` implementat
 
 ```toml
 [dependencies]
-rod_validation = { version = "0.3.0", features = ["serde"] }
+rod_validation = { version = "0.4.0", features = ["serde"] }
 ```
 
 ```rust

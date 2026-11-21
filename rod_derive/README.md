@@ -18,7 +18,7 @@ Add Rod Validation to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rod_validation = "0.2.2"
+rod_validation = "0.4.0"
 ```
 
 The derive macro is available through the prelude:
