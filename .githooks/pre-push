@@ -1,53 +1,70 @@
 #!/bin/bash
-# Pre-push hook to check if versions have changed before allowing push
-# This prevents pushing changes when neither rod_derive nor rod_validation versions have changed
+# Pre-push version-check hook.
+#
+# Rule: the crate versions being pushed must differ from origin/master's
+# versions. Bump rod_validation and/or rod_derive (semver) before pushing;
+# otherwise the push is rejected.
+#
+# Why compare against origin/master (instead of the destination ref)?
+# 1. For brand-new remote branches git reports an all-zeros remote OID, which
+#    is not diffable and made the previous revision reject every new-branch
+#    push with a bogus "versions have not changed".
+# 2. Feature branches push repeatedly while master does not move, so master is
+#    the only stable baseline.
+#
+# Notes:
+# - git hands pre-push its arguments on standard input, one line per pushed
+#   ref: "<local ref> <local sha> <remote ref> <remote sha>".
+# - The comparison uses the locally known origin/master ref (updated by
+#   fetch/pull/push of master); the hook itself never touches the network.
 
-# Get the remote SHA1 from arguments
-# $1 = local ref, $2 = local sha1, $3 = remote ref, $4 = remote sha1
-remote_sha1="$4"
-local_sha1="$2"
+zero=0000000000000000000000000000000000000000
+# Working-tree checkouts may use CRLF; strip the carriage return that the
+# `read` below would otherwise keep on the last field of each stdin line.
+CR=$(printf '\r')
 
-# Get the list of files changed in the commits being pushed
-cargo_changed=$(git diff --name-only "$remote_sha1" "$local_sha1" 2>/dev/null | grep -i "Cargo.toml")
-
-# Check if any Cargo.toml files have changed
-if [ -z "$cargo_changed" ]; then
-    echo "No changes detected in Cargo.toml files."
-    echo "Nothing to push - versions have not changed."
-    exit 1
+# Pick the master ref to compare against (fall back to main).
+master_ref=""
+if git rev-parse --verify --quiet origin/master >/dev/null 2>&1; then
+    master_ref="origin/master"
+elif git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+    master_ref="origin/main"
 fi
 
-# Check if versions were actually incremented
-# Get the current versions from the working directory
-get_version() {
-    local file="$1"
-    grep "^version" "$file" | head -1 | sed 's/version *= *"\(.*\)"/\1/'
+get_version() { # $1 = commit-ish, $2 = manifest path
+    git show "$1:$2" 2>/dev/null | grep "^version" | head -1 | sed 's/version *= *"\(.*\)"/\1/'
 }
 
-rod_version=$(get_version "Cargo.toml")
-rod_derive_version=$(get_version "rod_derive/Cargo.toml")
+while read -r local_ref local_sha remote_ref remote_sha; do
+    remote_sha="${remote_sha%$CR}"
 
-# Get the previous versions from the remote commit
-rod_version_old=$(git show "$remote_sha1:Cargo.toml" 2>/dev/null | grep "^version" | head -1 | sed 's/version *= *"\(.*\)"/\1/')
-rod_derive_version_old=$(git show "$remote_sha1:rod_derive/Cargo.toml" 2>/dev/null | grep "^version" | head -1 | sed 's/version *= *"\(.*\)"/\1/')
+    # Branch deletion: nothing to validate.
+    if [ "$local_sha" = "$zero" ]; then
+        continue
+    fi
 
-# Check if versions changed
-rod_version_changed=false
-rod_derive_version_changed=false
+    # No master ref available locally: cannot compare, allow the push.
+    if [ -z "$master_ref" ]; then
+        continue
+    fi
 
-if [ "$rod_version" != "$rod_version_old" ]; then
-    rod_version_changed=true
-fi
+    pushed_rod=$(get_version "$local_sha" "Cargo.toml")
+    pushed_derive=$(get_version "$local_sha" "rod_derive/Cargo.toml")
+    master_rod=$(get_version "$master_ref" "Cargo.toml")
+    master_derive=$(get_version "$master_ref" "rod_derive/Cargo.toml")
 
-if [ "$rod_derive_version" != "$rod_derive_version_old" ]; then
-    rod_derive_version_changed=true
-fi
+    # Pass as soon as one crate version differs from master.
+    if [ -n "$pushed_rod" ] && [ -n "$pushed_derive" ]; then
+        if [ "$pushed_rod" != "$master_rod" ] || [ "$pushed_derive" != "$master_derive" ]; then
+            continue
+        fi
+    fi
 
-# If neither version changed, fail the push
-if [ "$rod_version_changed" = false ] && [ "$rod_derive_version_changed" = false ]; then
-    echo "No changes detected in Cargo.toml files."
-    echo "Nothing to push - versions have not changed."
+    echo "Push rejected: no version bump relative to $master_ref."
+    echo "  rod_validation: pushed '${pushed_rod:-?}' (master '${master_rod:-?}')"
+    echo "  rod_derive:     pushed '${pushed_derive:-?}' (master '${master_derive:-?}')"
+    echo "Bump the version in Cargo.toml and/or rod_derive/Cargo.toml (semver), commit, and push again."
     exit 1
-fi
+done
 
-echo "Version check passed. Proceeding with push..."
+exit 0
