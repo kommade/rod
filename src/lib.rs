@@ -1,7 +1,10 @@
 #[cfg(test)]
 mod tests;
+mod combinators;
 mod errors;
 pub mod prelude;
+
+pub use combinators::*;
 
 pub trait RodValidate {
     /// Validate the struct, returning an error if validation fails.
