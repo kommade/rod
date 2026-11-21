@@ -82,43 +82,67 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-publish-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Configure cargo token
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_SECRET }}
+      - name: Check which crates need publishing (compare against crates.io)
+        id: check-versions
         run: |
-          # The token is provided via env and masked in logs.
-          echo "CARGO_REGISTRY_TOKEN configured (masked)."
+          manifest_version() { # $1 = manifest path
+            grep '^version' "$1" | head -1 | sed 's/version *= *"\(.*\)"/\1/'
+          }
 
-      - name: Check if rod_derive version changed
-        id: check-rod-derive
-        run: |
-          # Get the previous version from HEAD
-          OLD_VERSION=$(git show HEAD:rod_derive/Cargo.toml | grep '^version' | head -1 | sed 's/version *= *"\(.*\)"/\1/')
-          NEW_VERSION=$(grep '^version' rod_derive/Cargo.toml | head -1 | sed 's/version *= *"\(.*\)"/\1/')
-          
-          echo "Old version: $OLD_VERSION"
-          echo "New version: $NEW_VERSION"
-          
-          if [ "$OLD_VERSION" = "$NEW_VERSION" ]; then
-            echo "Version unchanged, skipping rod_derive publish"
-            echo "skip=true" >> $GITHUB_OUTPUT
+          published_version() { # $1 = crate name; empty string when never published
+            curl -fsSL "https://crates.io/api/v1/crates/$1" \
+              -H 'User-Agent: rod-publish-check (github.com/kommade/rod)' \
+              | jq -r '.crate.max_stable_version // ""' 2>/dev/null || echo ""
+          }
+
+          DERIVE_MANIFEST=$(manifest_version rod_derive/Cargo.toml)
+          DERIVE_PUBLISHED=$(published_version rod_derive)
+          VALIDATION_MANIFEST=$(manifest_version Cargo.toml)
+          VALIDATION_PUBLISHED=$(published_version rod_validation)
+
+          echo "rod_derive:     manifest=$DERIVE_MANIFEST published=${DERIVE_PUBLISHED:-<none>}"
+          echo "rod_validation: manifest=$VALIDATION_MANIFEST published=${VALIDATION_PUBLISHED:-<none>}"
+
+          # NOTE: this used to compare `git show HEAD:...` against the working
+          # tree — the same commit — so it always read "unchanged" and never
+          # published. The real baseline for publishing is crates.io itself.
+          if [ -n "$DERIVE_PUBLISHED" ] && [ "$DERIVE_MANIFEST" = "$DERIVE_PUBLISHED" ]; then
+            echo "rod_derive $DERIVE_MANIFEST is already on crates.io, skipping"
+            echo "skip_derive=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Version changed, will publish rod_derive"
-            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "rod_derive $DERIVE_MANIFEST is missing on crates.io, will publish"
+            echo "skip_derive=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish `rod_derive` (cd into subdirectory then publish)
-        if: steps.check-rod-derive.outputs.skip != 'true'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_SECRET }}
-        run: |
-          # cd into the subdirectory and publish from there.
-          cd rod_derive
-          cargo publish
+          if [ -n "$VALIDATION_PUBLISHED" ] && [ "$VALIDATION_MANIFEST" = "$VALIDATION_PUBLISHED" ]; then
+            echo "rod_validation $VALIDATION_MANIFEST is already on crates.io, skipping"
+            echo "skip_validation=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rod_validation $VALIDATION_MANIFEST is missing on crates.io, will publish"
+            echo "skip_validation=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Publish `rod` (workspace root package)
+      - name: Publish `rod_derive`
+        # rod_validation depends on this crate, so it must go first.
+        if: steps.check-versions.outputs.skip_derive != 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_SECRET }}
+        run: cargo publish --manifest-path rod_derive/Cargo.toml
+
+      - name: Publish `rod_validation` (waits for rod_derive to propagate)
+        # The registry is eventually consistent: right after publishing
+        # rod_derive, the index may not know the new version yet, so retry
+        # a few times before failing.
+        if: steps.check-versions.outputs.skip_validation != 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_SECRET }}
         run: |
-          # Publish the workspace package named `rod`. Adjust manifest-path if needed.
-          cargo publish -p rod_validation
+          for attempt in 1 2 3; do
+            if cargo publish -p rod_validation; then
+              exit 0
+            fi
+            echo "Attempt $attempt failed; the registry may not know rod_derive yet. Retrying in 15s..."
+            sleep 15
+          done
+          echo "rod_validation publish failed after 3 attempts."
+          exit 1
