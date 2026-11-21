@@ -59,6 +59,11 @@ pub trait RodValidate {
 #[cfg(feature = "serde")]
 pub use serde_json as __serde_json;
 
+// Root re-exports: generated code refers to `::rod_validation::...` absolute
+// paths so it does not depend on the deriving crate's imports.
+pub use combinators::AsyncValidator;
+pub use errors::{RodValidateError, RodValidateErrorList};
+
 // Root re-export: generated code refers to `::rod_validation::ToJsonSchema`.
 #[cfg(feature = "serde")]
 pub use combinators::ToJsonSchema;

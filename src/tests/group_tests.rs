@@ -7,6 +7,7 @@
 //! `AsyncValidator`).
 
 use crate::prelude::*;
+use super::support::block_on;
 
 #[derive(RodValidate, Clone)]
 struct Signup {
@@ -224,31 +225,6 @@ fn test_validate_any_and_one() {
 
 #[test]
 fn test_async_validation() {
-    fn block_on<F: Future>(fut: F) -> F::Output {
-        use std::pin::pin;
-        use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-
-        fn noop_raw_waker() -> RawWaker {
-            fn noop(_: *const ()) {}
-            fn clone(p: *const ()) -> RawWaker {
-                RawWaker::new(p, &VTABLE)
-            }
-            static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
-            RawWaker::new(std::ptr::null(), &VTABLE)
-        }
-
-        // SAFETY: the waker does nothing and never dereferences the pointer.
-        let waker = unsafe { Waker::from_raw(noop_raw_waker()) };
-        let mut cx = Context::from_waker(&waker);
-        let mut fut = pin!(fut);
-        loop {
-            match fut.as_mut().poll(&mut cx) {
-                Poll::Ready(value) => return value,
-                Poll::Pending => std::thread::yield_now(),
-            }
-        }
-    }
-
     let good = valid_signup();
     let bad = Signup {
         username: "u1".to_string(),

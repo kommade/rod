@@ -403,7 +403,7 @@ ValidationGroup::new(signup).validate_group("account")?;
 
 ## Validation Combinators
 
-The `RodValidateExt` trait (re-exported in the prelude) adds composition helpers to every `RodValidate` type:
+The `RodValidateExt` trait adds composition helpers to every `RodValidate` type:
 
 ```rust
 // OK if at least one validator passes; otherwise the last error.
@@ -529,14 +529,36 @@ Mapping summary:
 
 ## Async Validation
 
-Every `RodValidate` type is blanket-implemented with `AsyncValidator`, reserving a uniform async API for pipelines:
+Every `#[derive(RodValidate)]` type implements `AsyncValidator`, providing a uniform async API for pipelines. It validates *everything*: all synchronous rules first, then every `async_check`, returning one combined error list:
 
 ```rust
-// Same errors as `validate_all`, returned in a `Send` future
 let result = signup.validate_async().await;
 ```
 
-The generated checks are synchronous, so the future resolves immediately today; if truly async checks are added later, call sites won't change.
+Fields can additionally declare **async custom checks** with `async_check = |x| <future>` — the closure receives the field value and must return a `Send` future resolving to `bool` (e.g. a database lookup or an HTTP HEAD request):
+
+```rust
+#[derive(RodValidate)]
+struct Signup {
+    #[rod(
+        group = "account",
+        String {
+            length: 5..=10,
+        },
+        // Sync rules never wait; async checks run only in `validate_async`.
+        async_check = |u: &String| username_is_free(u)
+    )]
+    username: String,
+    #[rod(
+        String {
+            length: 8,
+        }
+    )]
+    password: String,
+}
+```
+
+Types without `async_check` fields behave like `validate_all` inside the future. Because checks run against `&self`, the validated type must be `Sync`, and the returned future is always `Send` — safe to use with `tokio::spawn` and friends. The lowest-level hook, `run_async_checks`, can also be overridden manually to add whole-value async rules without touching the derive.
 
 ## Testing Utilities
 
@@ -559,6 +581,7 @@ The `#[derive(RodValidate)]` macro generates the following for your types:
 - `validate_all_groups(&self) -> Result<(), RodValidateErrorList>` - Validate every field, regardless of groups
 - `impl RodMetadata` - Static `FIELDS: &'static [RodFieldMeta]` metadata (name, group, required) for form/UI generation
 - `impl ToJsonSchema` - JSON Schema export (generated only with the `serde` feature)
+- `impl AsyncValidator` - Async counterpart: `validate_async()` runs all sync rules plus every `async_check` field closure
 
 ### Error Messages
 
@@ -598,7 +621,8 @@ The macro generates validation code that:
 
 1. **Union types**: Not supported (will generate `todo!()` panic)
 2. **Double references**: `&&T` types are not allowed
-3. **Custom validation closures**: Must return `bool` type
+3. **Custom validation closures**: Must return `bool` type. Async closures (`async_check`) must return a `Send` future resolving to `bool`, and the type must be `Sync`
+4. **Regex features**: Require the `regex` crate feature to be enabled
 
 ## Rust Features
 

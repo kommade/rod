@@ -40,6 +40,12 @@ mod error_tests;
 /// Tests for validation groups, metadata, metrics and async validation
 mod group_tests;
 
+/// Tests for `async_check` fields and `AsyncValidator`
+mod async_tests;
+
+/// Shared helpers (current-thread executor)
+mod support;
+
 /// Tests for regex feature
 #[cfg(feature = "regex")]
 mod regex_tests;

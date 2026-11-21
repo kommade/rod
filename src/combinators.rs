@@ -261,19 +261,55 @@ impl<T: RodMetadata> ValidationMetadata for T {}
 
 /// Async counterpart of [`RodValidate`].
 ///
-/// The generated validations are synchronous, so the future resolves
-/// immediately; the trait exists so that async pipelines can be written
-/// uniformly and later extended with truly async checks.
-pub trait AsyncValidator: RodValidate {
-    /// Validate the whole value asynchronously, collecting every error.
+/// Implemented automatically by `#[derive(RodValidate)]` (there is no blanket
+/// impl, because the derive must be able to override
+/// [`AsyncValidator::run_async_checks`] for types declaring async checks).
+/// Two levels:
+///
+/// 1. **Synchronous rules**: by default `run_async_checks` runs no checks, so
+///    `validate_async` collects the same errors as `validate_all`.
+/// 2. **Async checks**: fields declaring
+///    `#[rod(..., async_check = |x| future_of_bool)]` get a generated
+///    `run_async_checks` override that awaits each closure (e.g. a database
+///    lookup) and collects failures.
+///
+/// `validate_async` therefore validates *everything*: all synchronous rules
+/// first, then every `async_check`, returning one combined error list.
+/// Async-check closures must return `Send` futures; since checks run against
+/// `&self`, the validated type is additionally required to be `Sync`.
+pub trait AsyncValidator: RodValidate + Sync {
+    /// Hook for the derive-generated `async_check` steps.
+    ///
+    /// Returns the errors produced by the type's async checks. The default
+    /// implementation runs no checks; the derive overrides it only for types
+    /// declaring at least one `async_check`.
+    fn run_async_checks(
+        &self,
+    ) -> impl std::future::Future<Output = Vec<RodValidateError>> + Send {
+        std::future::ready(Vec::new())
+    }
+
+    /// Validate the whole value asynchronously, collecting every error:
+    /// all synchronous rules plus every `async_check`.
     fn validate_async(
         &self,
     ) -> impl std::future::Future<Output = Result<(), RodValidateErrorList>> + Send {
-        std::future::ready(self.validate_all())
+        async move {
+            let mut errors = match self.validate_all() {
+                Ok(()) => RodValidateErrorList::new(),
+                Err(errors) => errors,
+            };
+            for error in self.run_async_checks().await {
+                errors.push(error);
+            }
+            if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(errors)
+            }
+        }
     }
 }
-
-impl<T: RodValidate> AsyncValidator for T {}
 
 /// A trait for validation with different modes
 pub trait ValidationMode {

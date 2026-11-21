@@ -259,18 +259,26 @@ enum RodExpr {
     Check(RodCheck),
     Message(RodMessage),
     Group(RodGroup),
+    AsyncCheck(RodAsyncCheck),
 }
 
 impl Parse for RodExpr {
     fn parse(input: ParseStream) -> SynResult<Self> {
         if input.peek(Ident) && input.peek2(syn::Token![=]) {
             let ident: Ident = input.fork().parse()?;
-            if ident == "group" {
-                let rod_group: RodGroup = input.parse()?;
-                Ok(RodExpr::Group(rod_group))
-            } else {
-                let rod_check: RodCheck = input.parse()?;
-                Ok(RodExpr::Check(rod_check))
+            match ident.to_string().as_str() {
+                "group" => {
+                    let rod_group: RodGroup = input.parse()?;
+                    Ok(RodExpr::Group(rod_group))
+                }
+                "async_check" => {
+                    let rod_async_check: RodAsyncCheck = input.parse()?;
+                    Ok(RodExpr::AsyncCheck(rod_async_check))
+                }
+                _ => {
+                    let rod_check: RodCheck = input.parse()?;
+                    Ok(RodExpr::Check(rod_check))
+                }
             }
         } else if input.peek(Ident) && input.peek2(syn::Token![:]) {
             let rod_message: RodMessage = input.parse()?;
@@ -330,6 +338,191 @@ fn has_groups(ast: &DeriveInput) -> bool {
     fields.iter().any(|f| parse_field_rod(f).0.is_some())
 }
 
+/// Extracts `async_check = ...` closures plus the field's optional
+/// `message: "..."` override from a field's `#[rod(...)]` attributes.
+/// Returns `(closures, message)`; `closures` may be empty.
+fn parse_field_async_checks(field: &syn::Field) -> (Vec<ExprClosure>, Option<LitStr>) {
+    let mut checks: Vec<ExprClosure> = Vec::new();
+    let mut message: Option<LitStr> = None;
+    for attr in &field.attrs {
+        if !attr.path().is_ident("rod") {
+            continue;
+        }
+        let exprs = attr.parse_args_with(
+            syn::punctuated::Punctuated::<RodExpr, syn::Token![,]>::parse_terminated,
+        );
+        if let Ok(exprs) = exprs {
+            for expr in exprs {
+                match expr {
+                    RodExpr::AsyncCheck(c) => checks.push(c.closure),
+                    RodExpr::Message(m) => message = Some(m.message),
+                    _ => {}
+                }
+            }
+        }
+    }
+    (checks, message)
+}
+
+/// Whether any field of the type carries an `async_check` closure.
+fn has_async_checks(ast: &DeriveInput) -> bool {
+    let fields: Vec<&syn::Field> = match &ast.data {
+        Data::Struct(data) => data.fields.iter().collect(),
+        Data::Enum(data) => data.variants.iter().flat_map(|v| v.fields.iter()).collect(),
+        Data::Union(_) => return false,
+    };
+    fields
+        .iter()
+        .any(|f| !parse_field_async_checks(f).0.is_empty())
+}
+
+/// Generates one awaited `async_check` invocation. Assumes the field value is
+/// already bound to `access` and a `rod_validate_async_errors` vec is in
+/// scope. The closure must return a `Send` future resolving to `bool`.
+fn async_check_tokens(
+    access: &Ident,
+    closure: &ExprClosure,
+    message: Option<&LitStr>,
+) -> proc_macro2::TokenStream {
+    let path = access.to_string();
+    let error_expr = match message {
+        Some(msg) => quote! { ::rod_validation::RodValidateError::UserDefined(#msg.to_string()) },
+        None => quote! { ::rod_validation::RodValidateError::CheckFailed(#path) },
+    };
+    quote! {
+        if !(#closure)(#access).await {
+            rod_validate_async_errors.push(#error_expr);
+        }
+    }
+}
+
+/// Generates `impl AsyncValidator for #name`, overriding
+/// `run_async_checks` when the type declares `async_check` fields. Sync
+/// rules never await; async checks are only executed by `validate_async`.
+fn build_async_checks_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
+    let name = &ast.ident;
+    if !has_async_checks(ast) {
+        // No async checks: an empty impl relies on the trait defaults, whose
+        // `run_async_checks` simply reports "nothing".
+        return quote! {
+            impl ::rod_validation::AsyncValidator for #name {}
+        };
+    }
+
+    let body: proc_macro2::TokenStream = match &ast.data {
+        Data::Struct(data) => {
+            let Fields::Named(fields_named) = &data.fields else {
+                unreachable!() // structs must be named (enforced by sync codegen)
+            };
+            let mut code = quote! {};
+            for field in &fields_named.named {
+                let (checks, message) = parse_field_async_checks(field);
+                if checks.is_empty() {
+                    continue;
+                }
+                let access = field.ident.as_ref().unwrap();
+                let pre_bind = match type_is_nested_reference(&field.ty) {
+                    IsNestedReference::None => quote! {
+                        let #access = &self.#access;
+                    },
+                    IsNestedReference::Single => quote! {
+                        let #access = self.#access;
+                    },
+                    IsNestedReference::More => abort!(
+                        field.ty.span(), "Field `{}` is a reference to a reference, which is not supported.", access;
+                        help = "Use a single reference instead, e.g. `&T` instead of `&&T`."
+                    ),
+                };
+                let mut field_checks = quote! {};
+                for closure in &checks {
+                    field_checks.extend(async_check_tokens(access, closure, message.as_ref()));
+                }
+                code.extend(quote! { #pre_bind #field_checks });
+            }
+            code
+        }
+        Data::Enum(data_enum) => {
+            let arms = data_enum.variants.iter().map(|variant| {
+                let variant_ident = &variant.ident;
+                let variant_checks: proc_macro2::TokenStream = match &variant.fields {
+                    Fields::Named(fields_named) => {
+                        let mut checks = quote! {};
+                        for field in &fields_named.named {
+                            let (closures, message) = parse_field_async_checks(field);
+                            if closures.is_empty() {
+                                continue;
+                            }
+                            let access = field.ident.as_ref().unwrap();
+                            for closure in &closures {
+                                checks.extend(async_check_tokens(access, closure, message.as_ref()));
+                            }
+                        }
+                        checks
+                    }
+                    Fields::Unnamed(fields_unnamed) => {
+                        let bindings: Vec<syn::Ident> = (0..fields_unnamed.unnamed.len())
+                            .map(|i| syn::Ident::new(&format!("field_{}", i), proc_macro2::Span::call_site()))
+                            .collect();
+                        let mut checks = quote! {};
+                        for (idx, field) in fields_unnamed.unnamed.iter().enumerate() {
+                            let (closures, message) = parse_field_async_checks(field);
+                            if closures.is_empty() {
+                                continue;
+                            }
+                            let access = &bindings[idx];
+                            for closure in &closures {
+                                checks.extend(async_check_tokens(access, closure, message.as_ref()));
+                            }
+                        }
+                        checks
+                    }
+                    Fields::Unit => quote! {},
+                };
+                match &variant.fields {
+                    Fields::Named(fields_named) => {
+                        let bindings = fields_named.named.iter().map(|f| f.ident.clone());
+                        quote! {
+                            Self::#variant_ident { #( #bindings ),* } => { #variant_checks }
+                        }
+                    }
+                    Fields::Unnamed(fields_unnamed) => {
+                        let bindings: Vec<syn::Ident> = (0..fields_unnamed.unnamed.len())
+                            .map(|i| syn::Ident::new(&format!("field_{}", i), proc_macro2::Span::call_site()))
+                            .collect();
+                        quote! {
+                            Self::#variant_ident(#( #bindings ),*) => { #variant_checks }
+                        }
+                    }
+                    Fields::Unit => {
+                        quote! {
+                            Self::#variant_ident => {}
+                        }
+                    }
+                }
+            });
+            quote! {
+                match self {
+                    #( #arms )*
+                }
+            }
+        }
+        Data::Union(_) => quote! {},
+    };
+
+    quote! {
+        impl ::rod_validation::AsyncValidator for #name {
+            fn run_async_checks(&self) -> impl ::core::future::Future<Output = Vec<::rod_validation::RodValidateError>> + Send {
+                async move {
+                    #[allow(unused_mut)]
+                    let mut rod_validate_async_errors: Vec<::rod_validation::RodValidateError> = Vec::new();
+                    #body
+                    rod_validate_async_errors
+                }
+            }
+        }
+    }
+}
+
 struct RodAttr {
     ty: RodAttrType,
     content: RodAttrContent,
@@ -337,6 +530,14 @@ struct RodAttr {
 }
 
 struct RodCheck {
+    closure: ExprClosure,
+    span: proc_macro2::Span,
+}
+
+/// Parsed `async_check = |x| ...` attribute. The closure must return a future
+/// resolving to `bool`; failing futures are collected as validation errors by
+/// `AsyncValidator::validate_async`.
+struct RodAsyncCheck {
     closure: ExprClosure,
     span: proc_macro2::Span,
 }
@@ -394,6 +595,36 @@ impl Parse for RodCheck {
             );
         }
         Ok(RodCheck {
+            closure: expr,
+            span,
+        })
+    }
+}
+
+impl Parse for RodAsyncCheck {
+    fn parse(input: ParseStream) -> SynResult<Self> {
+        let ident = input.parse::<Ident>()?;
+        if ident != "async_check" {
+            abort!(
+                ident.span(),
+                "Unknown attribute `{}`. Expected `check` or `group`",
+                ident
+            )
+        }
+        input.parse::<syn::Token![=]>()?;
+        let expr: ExprClosure = input.parse()?;
+        let span = ident
+            .span()
+            .join(expr.span())
+            .unwrap_or_else(|| proc_macro2::Span::call_site());
+        if expr.inputs.len() != 1 {
+            abort!(
+                expr.span(), "Expected a single argument for `async_check` closure, but found {} arguments",
+                expr.inputs.len();
+                help = "Make sure the closure has exactly one argument"
+            );
+        }
+        Ok(RodAsyncCheck {
             closure: expr,
             span,
         })
@@ -649,6 +880,7 @@ macro_rules!  get_field_validations {
                 let mut rod_attr_opt = None;
                 let mut message_opt = None;
                 let mut group_opt: Option<LitStr> = None;
+                let mut async_check_opt = None;
                 match attr.parse_args_with(syn::punctuated::Punctuated::<RodExpr, syn::Token![,]>::parse_terminated) {
                     Ok(exprlist) => {
                         for expr in exprlist {
@@ -661,6 +893,15 @@ macro_rules!  get_field_validations {
                                         );
                                     }
                                     check_opt = Some(check);
+                                }
+                                RodExpr::AsyncCheck(async_check) => {
+                                    if async_check_opt.is_some() {
+                                        abort!(
+                                            async_check.span, "Multiple `async_check` attributes found on field `{}`", $field_access;
+                                            help = "Remove the extra `async_check` attributes"
+                                        );
+                                    }
+                                    async_check_opt = Some(async_check);
                                 }
                                 RodExpr::Attribute(rod_attr) => {
                                     if rod_attr_opt.is_some() {
@@ -756,11 +997,13 @@ macro_rules!  get_field_validations {
                         })
                     }
                     None => {
-                        // A field may carry only a `group` and/or `check` without a
-                        // rod validation type: it is then validated by delegating to
-                        // its own `RodValidate` implementation (like unattributed
-                        // fields), plus running the optional `check`.
-                        if group_opt.is_none() && check_opt.is_none() {
+                        // A field may carry only a `group`, `check` or
+                        // `async_check` without a rod validation type: it is then
+                        // validated by delegating to its own `RodValidate`
+                        // implementation (like unattributed fields), plus running
+                        // the optional `check`. `async_check` steps are executed
+                        // separately by the generated `AsyncValidator` impl.
+                        if group_opt.is_none() && check_opt.is_none() && async_check_opt.is_none() {
                             abort!(
                                 attr.span(), "Failed to parse attribute",
                             );
@@ -1167,6 +1410,7 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
 
     let meta_impl = build_meta_impl(&ast);
     let schema_impl = schema::schema_impl_tokens(&ast);
+    let async_impl = build_async_checks_impl(&ast);
 
     quote! {
         impl RodValidate for #name {
@@ -1197,6 +1441,7 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
         }
         #meta_impl
         #schema_impl
+        #async_impl
     }
     .into()
 }
