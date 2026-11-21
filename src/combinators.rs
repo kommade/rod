@@ -186,7 +186,7 @@ pub trait RodValidateExt: RodValidate + Sized {
 
     /// Start a [`ValidationPipeline`] for this value, allowing several
     /// independent validations to run and their errors to be collected
-    /// together.
+    /// together into one [`RodValidateErrorList`].
     ///
     /// ```rust
     /// use rod_validation::prelude::*;
@@ -210,31 +210,33 @@ impl<T: RodValidate> RodValidateExt for T {}
 ///
 /// Unlike the [`RodValidateExt`] helpers this one is a struct, because each
 /// `step` mutates the accumulated error list; [`RodValidateExt::pipeline`]
-/// provides the natural entry point.
+/// provides the natural entry point. Errors are collected into the same
+/// [`RodValidateErrorList`] that `validate_all` returns, so the final report
+/// composes with the rest of the API (same `Display`, iteration, etc.).
 ///
 /// ```rust
 /// use rod_validation::prelude::*;
 /// # #[derive(RodValidate)]
 /// # struct User { #[rod(String { length: 3..=10 })] name: String }
 /// # let user = User { name: "aaa".to_string() };
-/// let errors = user.pipeline()
+/// let errors: Result<(), RodValidateErrorList> = user.pipeline()
 ///     .step(|u| u.validate())            // each step adds at most one error
 ///     .step_all(|u| u.validate_all())    // ...or many, from validate_all
-///     .all_errors();
-/// assert!(errors.is_empty());
+///     .result();                         // full list, like validate_all
+/// assert!(errors.is_ok());
 /// ```
 pub struct ValidationPipeline<T> {
     value: T,
-    errors: Vec<RodValidateError>,
+    errors: RodValidateErrorList,
 }
 
 impl<T: RodValidate> ValidationPipeline<T> {
     /// Create a new validation pipeline
     pub fn new(value: T) -> Self {
-        Self { value, errors: Vec::new() }
+        Self { value, errors: RodValidateErrorList::new() }
     }
     
-    /// Add a validation step
+    /// Add a validation step; on failure at most one error is collected.
     pub fn step<F>(mut self, step: F) -> Self
     where
         F: Fn(&T) -> Result<(), RodValidateError>,
@@ -251,22 +253,28 @@ impl<T: RodValidate> ValidationPipeline<T> {
         F: Fn(&T) -> Result<(), RodValidateErrorList>,
     {
         if let Err(errors) = step(&self.value) {
-            self.errors.extend(errors);
+            // Preserve insertion order while merging into the pipeline list.
+            for error in errors {
+                self.errors.push(error);
+            }
         }
         self
     }
     
-    /// Get the final result
-    pub fn result(self) -> Result<(), RodValidateError> {
+    /// Finish the pipeline like `validate_all`: `Ok(())` when every step
+    /// passed, otherwise the full [`RodValidateErrorList`].
+    pub fn result(self) -> Result<(), RodValidateErrorList> {
         if self.errors.is_empty() {
             Ok(())
         } else {
-            Err(self.errors[0].clone())
+            Err(self.errors)
         }
     }
     
-    /// Get all errors
-    pub fn all_errors(self) -> Vec<RodValidateError> {
+    /// Look at every collected error without consuming the pipeline's
+    /// reporting shape — returns the same [walkable][RodValidateErrorList]
+    /// list `validate_all` produces.
+    pub fn all_errors(self) -> RodValidateErrorList {
         self.errors
     }
 }

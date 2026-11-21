@@ -467,19 +467,21 @@ range.validate_with(|r| {
 
 ### Validation pipeline
 
-When a single `validate` call is not enough — run several independent validations and report *everything* — build a `ValidationPipeline`:
+When a single `validate_all` call is not enough — e.g. field rules **plus** a group **plus** an ad-hoc invariant, all funnelled into one report — build a `ValidationPipeline`. Errors accumulate into the same `RodValidateErrorList` that `validate_all` returns, so the result composes with everything else:
 
 ```rust
 let errors = user.pipeline()
-    .step(|u| u.validate())            // each step contributes at most one error
-    .step_all(|u| u.validate_all())    // ...or many, straight from validate_all
-    .all_errors();                     // inspect everything at once
-
-// Or finish like `validate` (first error only):
-user.pipeline().step(|u| u.validate()).result()?;
+    .step(|u| u.validate())                     // a fail-fast validation
+    .step_all(|u| u.validate_group("billing"))  // ...plus a whole group's errors
+    .step(|u| if u.expired() {
+        Err(RodValidateError::UserDefined("account expired".into()))
+    } else {
+        Ok(())
+    })                                          // ...plus ad-hoc rules
+    .result()?;                                 // Result<(), RodValidateErrorList>
 ```
 
-This is the only helper implemented as a struct rather than a method, because — unlike the others — it accumulates state (the error list) across steps; `pipeline()` on the trait is the entry point.
+Use `.all_errors()` instead of `.result()` when you want the collected list without the `Result` wrapper.
 
 ## Field Metadata & Metrics
 

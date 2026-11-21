@@ -83,17 +83,15 @@ macro_rules! rod_validation_types {
             }
         }
 
-        /// An iterator over the validation errors that consumes the list.
-        /// Each call to `next` removes and returns the last error from the list.
-        impl Iterator for RodValidateErrorList {
-            type Item = RodValidateError;
 
-            fn next(&mut self) -> Option<Self::Item> {
-                self.0.pop()
+        impl IntoIterator for RodValidateErrorList {
+            type Item = RodValidateError;
+            type IntoIter = std::vec::IntoIter<RodValidateError>;
+
+            fn into_iter(self) -> Self::IntoIter {
+                self.0.into_iter()
             }
         }
-
-
 
         impl Error for RodValidateErrorList {}
 
