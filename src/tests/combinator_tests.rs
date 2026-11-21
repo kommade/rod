@@ -1,6 +1,7 @@
 //! Tests for validation combinators
 
 use crate::prelude::*;
+use crate::combinators;
 
 #[test]
 fn test_validate_any() {

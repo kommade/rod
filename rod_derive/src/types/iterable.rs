@@ -102,6 +102,10 @@ impl Parse for RodIterableContent {
 }
 
 impl RodIterableContent {
+    pub(crate) fn length(&self) -> Option<&LengthOrSize> {
+        self.length.as_ref()
+    }
+
     pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let inner_validation = if let Some(msg) = self.custom_item_error.as_ref() {
             rod_content_match!(

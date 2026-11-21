@@ -91,6 +91,10 @@ impl Parse for RodLiteralContent {
 }
 
 impl RodLiteralContent {
+    pub(crate) fn value(&self) -> &PatLit {
+        &self.value
+    }
+
     pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let path = field_name.to_string();
         let value = &self.value.lit;

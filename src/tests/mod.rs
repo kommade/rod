@@ -37,21 +37,15 @@ mod custom_tests;
 /// Tests for error handling
 mod error_tests;
 
+/// Tests for validation groups, metadata, metrics and async validation
+mod group_tests;
+
 /// Tests for regex feature
 #[cfg(feature = "regex")]
 mod regex_tests;
 
-// Re-export all test modules for easy access
-pub use string_tests::*;
-pub use integer_tests::*;
-pub use float_tests::*;
-pub use tuple_tests::*;
-pub use struct_tests::*;
-pub use enum_tests::*;
-pub use option_tests::*;
-pub use iterable_tests::*;
-pub use custom_tests::*;
-pub use error_tests::*;
+/// Tests for JSON Schema generation (serde feature)
+#[cfg(feature = "serde")]
+mod json_schema_tests;
 
-#[cfg(feature = "regex")]
-pub use regex_tests::*;
+mod combinator_tests;

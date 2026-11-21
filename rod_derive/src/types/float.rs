@@ -5,7 +5,7 @@ use quote::{quote, ToTokens};
 
 use super::{optional_braced, user_defined_error, LengthOrSize, NumberSign, FLOAT_VALIDATION_FIELDS};
 
-enum FloatType {
+pub(crate) enum FloatType {
     Nan,
     Finite,
     Infinite,
@@ -78,6 +78,13 @@ pub struct RodFloatContent {
 }
 
 impl RodFloatContent {
+    pub(crate) fn size(&self) -> Option<&LengthOrSize> {
+        self.size.as_ref()
+    }
+    pub(crate) fn sign(&self) -> Option<&NumberSign> {
+        self.sign.as_ref()
+    }
+
     pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let path = field_name.to_string();
         let size_opt = self.size.as_ref().map(|size| {
