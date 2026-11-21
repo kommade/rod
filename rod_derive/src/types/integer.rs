@@ -10,7 +10,7 @@ use super::{optional_braced, user_defined_error, LengthOrSize, NumberSign, INTEG
 /// This struct includes optional fields for size, sign, and step, which are used in validation checks.
 /// # Attributes
 /// - `size`: An optional attribute that specifies a range for the integer to be in, or an exact value for the integer.
-/// - `sign`: An optional attribute that specifies the sign of the integer, see [`NumberSign`][crate::types::NumberSign] enum.
+/// - `sign`: An optional attribute that specifies the sign of the integer. Valid values are: `Positive`, `Negative`, `NonPositive`, `NonNegative`.
 /// - `step`: An optional attribute that specifies that the integer must be a multiple of this value.
 /// # Usage
 /// ```
@@ -39,6 +39,16 @@ pub struct RodIntegerContent {
 }
 
 impl RodIntegerContent {
+    pub(crate) fn size(&self) -> Option<&LengthOrSize> {
+        self.size.as_ref()
+    }
+    pub(crate) fn sign(&self) -> Option<&NumberSign> {
+        self.sign.as_ref()
+    }
+    pub(crate) fn step(&self) -> Option<&LitInt> {
+        self.step.as_ref()
+    }
+
     pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let path = field_name.to_string();
         let size_opt = self.size.as_ref().map(|size| {

@@ -1,8 +1,10 @@
 use proc_macro_error::abort;
 use quote::quote;
+#[cfg(feature = "regex")]
 use quote::ToTokens;
 
 use syn::{parse::Parse, LitStr};
+#[cfg(feature = "regex")]
 use syn::Ident;
 
 
@@ -21,6 +23,7 @@ mod regex_literals {
 /// `StringFormat` is an enum that represents the format of a string field.
 /// It includes variants for common formats such as email, URL, UUID, and IP addresses.
 /// The `Regex` variant allows for custom regex patterns.
+#[cfg(feature = "regex")]
 pub(crate) enum StringFormat {
     Regex(LitStr),
     Email,
@@ -31,6 +34,7 @@ pub(crate) enum StringFormat {
     DateTime,
 }
 
+#[cfg(feature = "regex")]
 impl ToTokens for StringFormat {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         match self {
@@ -45,6 +49,7 @@ impl ToTokens for StringFormat {
     }
 }
 
+#[cfg(feature = "regex")]
 impl Parse for StringFormat {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let lookahead = input.lookahead1();
@@ -77,7 +82,7 @@ impl Parse for StringFormat {
 /// which are used in validation checks.
 /// # Attributes
 /// - `length`: An optional attribute that specifies the length of the string.
-/// - `format`: An optional attribute that specifies the format of the string, such as email, URL, UUID, or any custom regex. See [`StringFormat`][crate::types::string::StringFormat] enum. Note that this attribute requires the `regex` feature to be enabled.
+/// - `format`: An optional attribute that specifies the format of the string. Valid values are: `Email`, `Url`, `Uuid`, `Ipv4`, `Ipv6`, `DateTime`, or a custom regex string literal. Note that this attribute requires the `regex` feature to be enabled.
 /// - `starts_with`: An optional attribute that specifies the string must start with this value.
 /// - `ends_with`: An optional attribute that specifies the string must end with this value.
 /// - `includes`: An optional attribute that specifies the string must include this value.
@@ -116,6 +121,23 @@ pub struct RodStringContent {
 }
 
 impl RodStringContent {
+    pub(crate) fn length(&self) -> Option<&LengthOrSize> {
+        self.length.as_ref()
+    }
+    #[cfg(feature = "regex")]
+    pub(crate) fn format(&self) -> Option<&StringFormat> {
+        self.format.as_ref()
+    }
+    pub(crate) fn starts_with(&self) -> Option<&LitStr> {
+        self.starts_with.as_ref()
+    }
+    pub(crate) fn ends_with(&self) -> Option<&LitStr> {
+        self.ends_with.as_ref()
+    }
+    pub(crate) fn includes(&self) -> Option<&LitStr> {
+        self.includes.as_ref()
+    }
+
     pub(crate) fn get_validations(&self, field_name: &proc_macro2::Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let path = field_name.to_string();
         let length_opt = self.length.as_ref().map(|length| {

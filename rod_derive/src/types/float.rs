@@ -5,7 +5,7 @@ use quote::{quote, ToTokens};
 
 use super::{optional_braced, user_defined_error, LengthOrSize, NumberSign, FLOAT_VALIDATION_FIELDS};
 
-enum FloatType {
+pub(crate) enum FloatType {
     Nan,
     Finite,
     Infinite,
@@ -49,8 +49,8 @@ impl ToTokens for FloatType {
 /// This struct includes optional fields for size, sign, and type, which are used in validation checks.
 /// # Attributes
 /// - `size`: An optional attribute that specifies the a range for the float to be in, or an exact value for the float.
-/// - `sign`: An optional attribute that specifies the sign of the float, see [`NumberSign`][crate::types::NumberSign] enum.
-/// - `ftype`: An optional attribute that specifies the type of the float, see [`FloatType`][crate::types::float::FloatType] enum.
+/// - `sign`: An optional attribute that specifies the sign of the float. Valid values are: `Positive`, `Negative`, `NonPositive`, `NonNegative`.
+/// - `ftype`: An optional attribute that specifies the type of the float. Valid values are: `NaN`, `Finite`, `Infinite`, `Normal`, `Subnormal`.
 /// # Usage
 /// ```
 /// use rod::prelude::*;
@@ -78,6 +78,13 @@ pub struct RodFloatContent {
 }
 
 impl RodFloatContent {
+    pub(crate) fn size(&self) -> Option<&LengthOrSize> {
+        self.size.as_ref()
+    }
+    pub(crate) fn sign(&self) -> Option<&NumberSign> {
+        self.sign.as_ref()
+    }
+
     pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let path = field_name.to_string();
         let size_opt = self.size.as_ref().map(|size| {

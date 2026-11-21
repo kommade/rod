@@ -1,0 +1,13 @@
+# Shell scripts must keep LF endings: git-for-windows checkouts otherwise use
+# CRLF, which breaks bash parsing (a stray CR ends up inside tokens and even
+# the shebang). This is why the pre-push hook appeared "broken" on fresh
+# checkouts even when its source was correct.
+*.bash text eol=lf
+*.sh text eol=lf
+.githooks/** text eol=lf
+
+# Rust sources and manifests: store LF, let git normalize per-platform prefs.
+*.rs text
+*.toml text
+*.md text
+*.json text

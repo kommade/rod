@@ -285,6 +285,8 @@ pub(super) fn optional_paren(input: syn::parse::ParseStream) -> syn::Result<Opti
 
 mod string;
 pub use string::RodStringContent;
+#[cfg(feature = "regex")]
+pub(crate) use string::StringFormat;
 
 mod integer;
 pub use integer::RodIntegerContent;
