@@ -86,20 +86,25 @@ fn deref_prefix(count: usize) -> proc_macro2::TokenStream {
     stars
 }
 
-/// Struct-style binding for a field access, normalized so that `access` has
-/// type `&T_inner` regardless of how many references wrap the field:
-/// `T` -> `&self.field`, `&T` (or `&&T`, `&&&T`, ...) -> peels down to `&T`.
+/// Struct-style binding for a field, normalized so that `access` has type
+/// `&T_inner` regardless of how many references wrap the field: `T` ->
+/// `&self.member`, `&T` (or `&&T`, `&&&T`, ...) -> peels down to `&T`.
+/// `member` is the field as accessed on `self` (`self.field` or `self.0`).
 /// Peeling is always possible because `&T: Copy` for every `T`.
-fn struct_field_binding(access: &Ident, field: &syn::Field) -> proc_macro2::TokenStream {
+fn struct_field_binding(
+    access: &Ident,
+    member: &syn::Member,
+    field: &syn::Field,
+) -> proc_macro2::TokenStream {
     let depth = reference_depth(&field.ty);
     if depth == 0 {
         quote! {
-            let #access = &self.#access;
+            let #access = &self.#member;
         }
     } else {
         let stars = deref_prefix(depth - 1);
         quote! {
-            let #access = #stars self.#access;
+            let #access = #stars self.#member;
         }
     }
 }
@@ -465,26 +470,40 @@ fn build_async_checks_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
     }
 
     let body: proc_macro2::TokenStream = match &ast.data {
-        Data::Struct(data) => {
-            let Fields::Named(fields_named) = &data.fields else {
-                unreachable!() // structs must be named (enforced by sync codegen)
-            };
-            let mut code = quote! {};
-            for field in &fields_named.named {
-                let (checks, message) = parse_field_async_checks(field);
-                if checks.is_empty() {
-                    continue;
+        Data::Struct(data) => match &data.fields {
+            Fields::Named(fields_named) => {
+                let mut code = quote! {};
+                for field in &fields_named.named {
+                    let (checks, message) = parse_field_async_checks(field);
+                    if checks.is_empty() {
+                        continue;
+                    }
+                    let access = field.ident.as_ref().unwrap();
+                    let member = syn::Member::Named(access.clone());
+                    let pre_bind = struct_field_binding(access, &member, field);
+                    let mut field_checks = quote! {};
+                    for closure in &checks {
+                        field_checks.extend(async_check_tokens(access, closure, message.as_ref()));
+                    }
+                    code.extend(quote! { #pre_bind #field_checks });
                 }
-                let access = field.ident.as_ref().unwrap();
-                let pre_bind = struct_field_binding(access, field);
+                code
+            }
+            // Newtype: the single inner field is bound as `__inner`.
+            Fields::Unnamed(fields_unnamed) if fields_unnamed.unnamed.len() == 1 => {
+                let field = fields_unnamed.unnamed.first().unwrap();
+                let (checks, message) = parse_field_async_checks(field);
+                let access = syn::Ident::new("__inner", proc_macro2::Span::call_site());
+                let member = syn::Member::Unnamed(syn::Index::from(0));
+                let pre_bind = struct_field_binding(&access, &member, field);
                 let mut field_checks = quote! {};
                 for closure in &checks {
-                    field_checks.extend(async_check_tokens(access, closure, message.as_ref()));
+                    field_checks.extend(async_check_tokens(&access, closure, message.as_ref()));
                 }
-                code.extend(quote! { #pre_bind #field_checks });
+                quote! { #pre_bind #field_checks }
             }
-            code
-        }
+            Fields::Unnamed(_) | Fields::Unit => quote! {},
+        },
         Data::Enum(data_enum) => {
             let arms = data_enum.variants.iter().map(|variant| {
                 let variant_ident = &variant.ident;
@@ -1052,7 +1071,13 @@ macro_rules!  get_field_validations {
                         let mut code = quote! {
                             let assert = assert_impl_rod_validate(#field_access);
                             if let Err(errs) = assert {
+                                let mut rod_nested_errors: Vec<RodValidateError> = Vec::new();
                                 for e in errs {
+                                    rod_nested_errors.push(
+                                        RodValidateError::Nested(#path, Box::new(e)),
+                                    );
+                                }
+                                for e in rod_nested_errors {
                                     #ret;
                                 }
                             }
@@ -1111,11 +1136,18 @@ fn field_body(
     // Otherwise, the custom type can just have no #rod attribute
     let body: proc_macro2::TokenStream = if field.attrs.is_empty() {
         check_valid_rod_type!(field.ty, field.ty.span(), Some(access));
+        let path = access.to_string();
+        // Collect nested errors, then wrap each one so the field path is
+        // preserved (`Nested` chains render as `outer.inner: ...`).
         let ret = wrap_validations(quote! { e });
         quote! {
             let assert = assert_impl_rod_validate(#access);
             if let Err(errs) = assert {
+                let mut rod_nested_errors: Vec<RodValidateError> = Vec::new();
                 for e in errs {
+                    rod_nested_errors.push(RodValidateError::Nested(#path, Box::new(e)));
+                }
+                for e in rod_nested_errors {
                     #ret;
                 }
             }
@@ -1145,17 +1177,30 @@ fn build_validation_code(
     guard: bool,
 ) -> proc_macro2::TokenStream {
     match &ast.data {
-        Data::Struct(data_struct) => {
-            if let Fields::Named(fields_named) = &data_struct.fields {
-                fields_named.named.iter().map(|field| {
-                    let access = field.ident.as_ref().unwrap();
-                    let pre_bind = struct_field_binding(access, field);
-                    field_body(field, access, pre_bind, wrap_validations, guard)
-                }).collect()
-            } else {
-                unreachable!()
+        Data::Struct(data_struct) => match &data_struct.fields {
+            Fields::Named(fields_named) => fields_named.named.iter().map(|field| {
+                let access = field.ident.as_ref().unwrap();
+                let member = syn::Member::Named(access.clone());
+                let pre_bind = struct_field_binding(access, &member, field);
+                field_body(field, access, pre_bind, wrap_validations, guard)
+            }).collect(),
+            // Newtype struct: validate the single inner field, bound as `__inner`.
+            Fields::Unnamed(fields_unnamed) if fields_unnamed.unnamed.len() == 1 => {
+                let field = fields_unnamed.unnamed.first().unwrap();
+                let access = syn::Ident::new("__inner", proc_macro2::Span::call_site());
+                let member = syn::Member::Unnamed(syn::Index::from(0));
+                let pre_bind = struct_field_binding(&access, &member, field);
+                field_body(field, &access, pre_bind, wrap_validations, guard)
             }
-        }
+            // Multi-field tuple structs are not supported (use named fields).
+            Fields::Unnamed(_) => abort!(
+                data_struct.fields.span(),
+                "Tuple structs with more than one field are not supported";
+                help = "Use a struct with named fields instead."
+            ),
+            // Unit struct: nothing to validate.
+            Fields::Unit => quote! {},
+        },
         Data::Enum(data_enum) => {
             let match_arms = data_enum.variants.iter().map(|variant| {
                 let variant_ident = &variant.ident;
@@ -1245,8 +1290,8 @@ fn build_meta_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
     let name = &ast.ident;
     let mut entries: Vec<proc_macro2::TokenStream> = Vec::new();
     match &ast.data {
-        Data::Struct(data) => {
-            if let Fields::Named(fields_named) = &data.fields {
+        Data::Struct(data) => match &data.fields {
+            Fields::Named(fields_named) => {
                 for field in &fields_named.named {
                     let (group, rod_attr) = parse_field_rod(field);
                     if is_skip_content(&rod_attr) {
@@ -1256,7 +1301,20 @@ fn build_meta_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
                     entries.push(meta_entry_tokens(field_name, &group, field_required(&rod_attr)));
                 }
             }
-        }
+            // Newtype: the inner field is exposed as `__inner`.
+            Fields::Unnamed(fields_unnamed) if fields_unnamed.unnamed.len() == 1 => {
+                let field = fields_unnamed.unnamed.first().unwrap();
+                let (group, rod_attr) = parse_field_rod(field);
+                if !is_skip_content(&rod_attr) {
+                    entries.push(meta_entry_tokens(
+                        "__inner".to_string(),
+                        &group,
+                        field_required(&rod_attr),
+                    ));
+                }
+            }
+            Fields::Unnamed(_) | Fields::Unit => {}
+        },
         Data::Enum(data_enum) => {
             for variant in &data_enum.variants {
                 match &variant.fields {

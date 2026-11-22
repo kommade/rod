@@ -221,7 +221,24 @@ fn literal_to_json(lit: &syn::PatLit) -> (String, &'static str) {
     (trimmed.to_string(), "string")
 }
 
-fn literal_schema(lit: &syn::PatLit) -> Option<Json> {
+fn literal_schema(content: &crate::types::RodLiteralContent) -> Option<Json> {
+    // `any: [...]` form -> JSON Schema `enum` (typed per literal kind).
+    if !content.any().is_empty() {
+        let values: Vec<Json> = content
+            .any()
+            .iter()
+            .map(|lit| {
+                let (value, ty) = literal_to_json(lit);
+                match ty {
+                    "boolean" => Json::Bool(value == "true"),
+                    "number" => Json::Num(value),
+                    _ => Json::Str(value),
+                }
+            })
+            .collect();
+        return Some(Json::obj(vec![("enum", Json::Arr(values))]));
+    }
+    let lit = content.value()?;
     let (value, ty) = literal_to_json(lit);
     // Emit `const` with the proper JSON type, not as a string.
     let const_json = match ty {
@@ -408,7 +425,7 @@ fn content_schema(content: &RodAttrContent) -> Option<Json> {
         RodAttrContent::Skip(_) => None,
         RodAttrContent::Boolean(_) => Some(Json::obj(vec![("type", Json::s("boolean"))])),
         RodAttrContent::Custom(_) => Some(Json::obj(vec![("type", Json::s("object"))])),
-        RodAttrContent::Literal(l) => literal_schema(l.value()),
+        RodAttrContent::Literal(l) => literal_schema(l),
         RodAttrContent::String(s) => string_schema(s),
         RodAttrContent::Integer(i) => integer_schema(i),
         RodAttrContent::Float(f) => float_schema(f),
@@ -469,12 +486,27 @@ fn object_from_fields<'a, I: IntoIterator<Item = &'a syn::Field>>(fields: I) -> 
     Json::obj(pairs)
 }
 
+/// Schema for an unattributed custom-type field (nested `RodValidate`).
+fn inner_field_schema(field: &syn::Field) -> Option<Json> {
+    match field_schema(field) {
+        Some((schema, _required)) => schema,
+        None => Some(Json::obj(vec![("type", Json::s("object"))])),
+    }
+}
+
 fn struct_schema(data: &DataStruct) -> Json {
     match &data.fields {
         Fields::Named(named) => object_from_fields(&named.named),
-        // The validation derive only supports named structs; emit a generic
-        // object schema for anything else.
-        _ => Json::obj(vec![("type", Json::s("object"))]),
+        // Newtype structs validate their single inner field; the schema is
+        // the inner field's rule (same idea as Rust's transparent types).
+        Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => inner_field_schema(
+            unnamed.unnamed.first().unwrap(),
+        )
+        .unwrap_or(Json::obj(vec![("type", Json::s("object"))])),
+        // Multi-field tuple structs are rejected at codegen; unit structs
+        // accept anything.
+        Fields::Unnamed(_) => Json::obj(vec![("type", Json::s("object"))]),
+        Fields::Unit => Json::Bool(true),
     }
 }
 

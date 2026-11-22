@@ -43,6 +43,9 @@ mod group_tests;
 /// Tests for `async_check` fields and `AsyncValidator`
 mod async_tests;
 
+/// Tests for newtype structs, nested error paths and multi-value literals
+mod newtype_tests;
+
 /// Shared helpers (current-thread executor)
 mod support;
 

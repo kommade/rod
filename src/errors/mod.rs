@@ -22,9 +22,28 @@ macro_rules! rod_validation_types {
             )*
             CheckFailed(&'static str),
             UserDefined(String),
+            /// An error raised while validating a nested field that itself
+            /// implements `RodValidate`. Keeps the field name so the full
+            /// path (`outer.inner`) can be reconstructed; nestings produce
+            /// nested `Nested` layers.
+            Nested(&'static str, Box<RodValidateError>),
         }
 
-        impl Error for RodValidateError {}
+        impl RodValidateError {
+            /// The path of field names leading to this error, outermost
+            /// first (e.g. `["person", "address", "city"]`). Empty for
+            /// top-level errors.
+            pub fn path(&self) -> Vec<&str> {
+                match self {
+                    RodValidateError::Nested(field, inner) => {
+                        let mut path: Vec<&str> = vec![field];
+                        path.extend(inner.path());
+                        path
+                    }
+                    _ => Vec::new(),
+                }
+            }
+        }
 
         impl Display for RodValidateError {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -37,9 +56,21 @@ macro_rules! rod_validation_types {
                         write!(f, "Custom validation check failed for `{}`", path),
                     RodValidateError::UserDefined(msg) => 
                         write!(f, "{}", msg),
+                    RodValidateError::Nested(_field, _inner) => {
+                        // The nesting chain renders as a dotted path prefix.
+                        let mut path: Vec<&str> = Vec::new();
+                        let mut current = self;
+                        while let RodValidateError::Nested(field, next) = current {
+                            path.push(field);
+                            current = next;
+                        }
+                        write!(f, "{}: {}", path.join("."), current)
+                    }
                 }
             }
         }
+
+        impl Error for RodValidateError {}
 
         /// A list of validation errors.
         /// This is used in the `validate_all` method of the `RodValidate` trait
