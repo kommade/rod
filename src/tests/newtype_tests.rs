@@ -240,7 +240,23 @@ fn literal_any_with_custom_message() {
 }
 
 #[test]
-fn literal_value_still_works() {
+fn literal_is_canonical_form() {
+    #[derive(RodValidate)]
+    struct Mode {
+        #[rod(Literal { is: 42 })]
+        answer: i32,
+    }
+
+    assert!(Mode { answer: 42 }.validate().is_ok());
+    assert!(Mode { answer: 41 }.validate().is_err());
+}
+
+#[test]
+fn literal_value_deprecated_still_works() {
+    // `value:` is the deprecated alias of `is:`; itself it must still
+    // validate correctly (the deprecation warning is emitted at compile
+    // time by the derive).
+    #![allow(deprecated)]
     #[derive(RodValidate)]
     struct Mode {
         #[rod(Literal { value: 42 })]

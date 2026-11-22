@@ -317,6 +317,7 @@ macro_rules! assert_type {
 enum RodExpr {
     Attribute(RodAttr),
     Check(RodCheck),
+    CheckAll(RodCheckAll),
     Message(RodMessage),
     Group(RodGroup),
     AsyncCheck(RodAsyncCheck),
@@ -334,6 +335,10 @@ impl Parse for RodExpr {
                 "async_check" => {
                     let rod_async_check: RodAsyncCheck = input.parse()?;
                     Ok(RodExpr::AsyncCheck(rod_async_check))
+                }
+                "check_all" => {
+                    let rod_check_all: RodCheckAll = input.parse()?;
+                    Ok(RodExpr::CheckAll(rod_check_all))
                 }
                 _ => {
                     let rod_check: RodCheck = input.parse()?;
@@ -599,6 +604,14 @@ struct RodCheck {
     span: proc_macro2::Span,
 }
 
+/// Parsed `check_all = |x| ...` attribute. The closure returns an iterator
+/// (or Vec) of error messages; every element becomes one `UserDefined`
+/// error. Zod `superRefine`-style multi-issue checks.
+struct RodCheckAll {
+    closure: ExprClosure,
+    span: proc_macro2::Span,
+}
+
 /// Parsed `async_check = |x| ...` attribute. The closure must return a future
 /// resolving to `bool`; failing futures are collected as validation errors by
 /// `AsyncValidator::validate_async`.
@@ -690,6 +703,36 @@ impl Parse for RodAsyncCheck {
             );
         }
         Ok(RodAsyncCheck {
+            closure: expr,
+            span,
+        })
+    }
+}
+
+impl Parse for RodCheckAll {
+    fn parse(input: ParseStream) -> SynResult<Self> {
+        let ident = input.parse::<Ident>()?;
+        if ident != "check_all" {
+            abort!(
+                ident.span(),
+                "Unknown attribute `{}`. Expected `check`, `async_check` or `group`",
+                ident
+            )
+        }
+        input.parse::<syn::Token![=]>()?;
+        let expr: ExprClosure = input.parse()?;
+        let span = ident
+            .span()
+            .join(expr.span())
+            .unwrap_or_else(|| proc_macro2::Span::call_site());
+        if expr.inputs.len() != 1 {
+            abort!(
+                expr.span(), "Expected a single argument for `check_all` closure, but found {} arguments",
+                expr.inputs.len();
+                help = "Make sure the closure has exactly one argument"
+            );
+        }
+        Ok(RodCheckAll {
             closure: expr,
             span,
         })
@@ -942,6 +985,7 @@ macro_rules!  get_field_validations {
         $field.attrs.iter().filter_map(|attr| {
             if attr.path().is_ident("rod") {
                 let mut check_opt = None;
+                let mut check_all_opt = None;
                 let mut rod_attr_opt = None;
                 let mut message_opt = None;
                 let mut group_opt: Option<LitStr> = None;
@@ -958,6 +1002,15 @@ macro_rules!  get_field_validations {
                                         );
                                     }
                                     check_opt = Some(check);
+                                }
+                                RodExpr::CheckAll(check_all) => {
+                                    if check_all_opt.is_some() {
+                                        abort!(
+                                            check_all.span, "Multiple `check_all` attributes found on field `{}`", $field_access;
+                                            help = "Remove the extra `check_all` attributes"
+                                        );
+                                    }
+                                    check_all_opt = Some(check_all);
                                 }
                                 RodExpr::AsyncCheck(async_check) => {
                                     if async_check_opt.is_some() {
@@ -1023,7 +1076,9 @@ macro_rules!  get_field_validations {
                                 [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
                             )
                         };
-                        let check = check_opt.map_or_else(|| quote! {}, |check| {
+                        let field_access = $field_access;
+                        let field_type = single_ref_type(&$field.ty);
+                        let check = check_opt.as_ref().map_or_else(|| quote! {}, |check| {
                             if matches!(rod_attr.ty, RodAttrType::Skip(_)) {
                                 abort!(
                                     check.span, "Cannot use `check` with `skip` attribute on field `{}`", $field_access;
@@ -1031,7 +1086,6 @@ macro_rules!  get_field_validations {
                                 );
                             }
                             let closure = &check.closure;
-                            let field_type = single_ref_type(&$field.ty);
                             let path = $field_access.to_string();
                             let ret = if let Some(message) = message_opt.as_ref() {
                                 let msg = &message.message;
@@ -1039,7 +1093,6 @@ macro_rules!  get_field_validations {
                             } else {
                                 $wrap_return(quote! { RodValidateError::CheckFailed(#path) })
                             };
-                            let field_access = $field_access;
                             quote! {
                                 let check: fn(#field_type) -> bool = #closure;
                                 if !check(#field_access) {
@@ -1047,19 +1100,51 @@ macro_rules!  get_field_validations {
                                 }
                             }
                         });
+                        let check_all = check_all_opt.as_ref().map_or_else(|| quote! {}, |check_all| {
+                            if matches!(rod_attr.ty, RodAttrType::Skip(_)) {
+                                abort!(
+                                    check_all.span, "Cannot use `check_all` with `skip` attribute on field `{}`", $field_access;
+                                    help = "Remove the `check_all` attribute"
+                                );
+                            }
+                            if check_opt.is_some() {
+                                abort!(
+                                    check_all.span, "Cannot use both `check` and `check_all` on field `{}`", $field_access;
+                                    help = "Combine them into one `check_all` closure that yields the messages of both."
+                                );
+                            }
+                            let closure = &check_all.closure;
+                            // The wrapper must be resolved at derive time: calling
+                            // it verbatim here would leak into generated user code.
+                            let ret = $wrap_return(quote! {
+                                RodValidateError::UserDefined(msg.to_string())
+                            });
+                            quote! {
+                                let check_all: fn(#field_type) -> Vec<&'static str> = #closure;
+                                for msg in check_all(#field_access) {
+                                    #ret;
+                                }
+                            }
+                        });
                         Some(quote! {
+                            #check_all
                             #check
                             #validations_for_field
                         })
                     }
                     None => {
-                        // A field may carry only a `group`, `check` or
-                        // `async_check` without a rod validation type: it is then
-                        // validated by delegating to its own `RodValidate`
-                        // implementation (like unattributed fields), plus running
-                        // the optional `check`. `async_check` steps are executed
-                        // separately by the generated `AsyncValidator` impl.
-                        if group_opt.is_none() && check_opt.is_none() && async_check_opt.is_none() {
+                        // A field may carry only a `group`, `check`,
+                        // `check_all` or `async_check` without a rod validation
+                        // type: it is then validated by delegating to its own
+                        // `RodValidate` implementation (like unattributed
+                        // fields), plus running the optional `check`/`check_all`.
+                        // `async_check` steps are executed separately by the
+                        // generated `AsyncValidator` impl.
+                        if group_opt.is_none()
+                            && check_opt.is_none()
+                            && check_all_opt.is_none()
+                            && async_check_opt.is_none()
+                        {
                             abort!(
                                 attr.span(), "Failed to parse attribute",
                             );
@@ -1094,6 +1179,18 @@ macro_rules!  get_field_validations {
                             code.extend(quote! {
                                 let check: fn(#field_type) -> bool = #closure;
                                 if !check(#field_access) {
+                                    #ret;
+                                }
+                            });
+                        }
+                        if let Some(check_all) = check_all_opt {
+                            let closure = &check_all.closure;
+                            let ret = $wrap_return(quote! {
+                                RodValidateError::UserDefined(msg.to_string())
+                            });
+                            code.extend(quote! {
+                                let check_all: fn(#field_type) -> Vec<&'static str> = #closure;
+                                for msg in check_all(#field_access) {
                                     #ret;
                                 }
                             });
@@ -1285,6 +1382,123 @@ fn is_skip_content(rod_attr: &Option<RodAttr>) -> bool {
     matches!(rod_attr, Some(attr) if matches!(&attr.content, RodAttrContent::Skip(_)))
 }
 
+/// One `Field -> Expr` sanitize step: the field's self-access member plus
+/// the transform to apply to it.
+struct SanitizeStep {
+    member: syn::Member,
+    transform: proc_macro2::TokenStream,
+}
+
+/// Collects the sanitize transforms a field declares. Returns `None` for
+/// fields without any.
+///
+/// Supported today:
+/// - `String` rules with `trim = true` -> `String::from(x.trim())`
+/// - `Option` rules with `default = expr` -> `Some(expr)` when `None`
+fn field_sanitize_step(field: &syn::Field, member: &syn::Member) -> Option<SanitizeStep> {
+    let (_, rod_attr) = parse_field_rod(field);
+    let attr = rod_attr.as_ref()?;
+
+    let transform: proc_macro2::TokenStream = match &attr.content {
+        RodAttrContent::String(s) if s.trim() => quote! {
+            ::std::string::String::from(value.trim())
+        },
+        RodAttrContent::Option(o) => {
+            // Only apply the fallback when the rule validates Some
+            // (an inner rule). Without an inner rule the value must be None,
+            // so a default makes no sense.
+            match (o.default(), o.inner.is_some()) {
+                (Some(default_expr), true) => quote! {
+                    match value {
+                        ::core::option::Option::None => ::core::option::Option::Some(#default_expr),
+                        other => other,
+                    }
+                },
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+
+    Some(SanitizeStep {
+        member: member.clone(),
+        transform,
+    })
+}
+
+/// Generates `impl RodParse for #name`.
+///
+/// `sanitize` consumes `self`, rebuilds it applying every field transform in
+/// declaration order (string trim, Option default), then hands the value
+/// back; `parse` (trait default) validates the result.
+fn build_parse_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
+    let name = &ast.ident;
+
+    let body: proc_macro2::TokenStream = match &ast.data {
+        Data::Struct(data) => match &data.fields {
+            Fields::Named(fields_named) => {
+                let mut steps: Vec<SanitizeStep> = Vec::new();
+                for field in &fields_named.named {
+                    let member = syn::Member::Named(field.ident.as_ref().unwrap().clone());
+                    if let Some(step) = field_sanitize_step(field, &member) {
+                        steps.push(step);
+                    }
+                }
+                if steps.is_empty() {
+                    quote! { self }
+                } else {
+                    let rebuilds = steps.iter().map(|step| {
+                        let member = &step.member;
+                        let transform = &step.transform;
+                        quote! {
+                            #member: {
+                                let value = self.#member;
+                                #transform
+                            },
+                        }
+                    });
+                    quote! {
+                        #[allow(unused_mut)]
+                        Self {
+                            #( #rebuilds )*
+                            ..self
+                        }
+                    }
+                }
+            }
+            // Newtype: the inner field is transformed in place.
+            Fields::Unnamed(fields_unnamed) if fields_unnamed.unnamed.len() == 1 => {
+                let field = fields_unnamed.unnamed.first().unwrap();
+                match field_sanitize_step(field, &syn::Member::Unnamed(syn::Index::from(0))) {
+                    Some(step) => {
+                        let transform = &step.transform;
+                        quote! {
+                            Self({
+                                let value = self.0;
+                                #transform
+                            })
+                        }
+                    }
+                    None => quote! { self },
+                }
+            }
+            Fields::Unnamed(_) | Fields::Unit => quote! { self },
+        },
+        // Enum variants cannot be rebuilt generically (no constructor access
+        // to all fields at once without matching); enums sanitize to self.
+        Data::Enum(_) => quote! { self },
+        Data::Union(_) => quote! { self },
+    };
+
+    quote! {
+        impl ::rod_validation::RodParse for #name {
+            fn sanitize(self) -> Self {
+                #body
+            }
+        }
+    }
+}
+
 /// Generates `impl RodMetadata for #name` exposing static field metadata.
 fn build_meta_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
     let name = &ast.ident;
@@ -1370,7 +1584,8 @@ fn build_meta_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
 ///   require `None`
 /// - **Tuples** — `(T1, T2, ...)` with one rule per element
 /// - **Iterables** — `Iterable { item: ..., length: ... }` for `Vec` and friends
-/// - **Literals** — `Literal { value: ... }` compares against any literal
+/// - **Literals** — `is: ...` (or deprecated `value: ...`) compares against
+///   one literal; `any: [...]` accepts any of the listed literals
 /// - **Skip** — `#[rod(skip)]` excludes a field from validation
 ///
 /// Any other type is treated as a custom type and must implement
@@ -1498,6 +1713,7 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
     let meta_impl = build_meta_impl(&ast);
     let schema_impl = schema::schema_impl_tokens(&ast);
     let async_impl = build_async_checks_impl(&ast);
+    let parse_impl = build_parse_impl(&ast);
 
     quote! {
         impl RodValidate for #name {
@@ -1529,6 +1745,7 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
         #meta_impl
         #schema_impl
         #async_impl
+        #parse_impl
     }
     .into()
 }

@@ -7,14 +7,16 @@ use super::{optional_braced, user_defined_error};
 
 /// `RodLiteralContent` is a struct that represents the content of a literal field in a Rod entity.
 /// It is used to parse and validate literal attributes in the `#[rod]` attribute macro.
-/// This struct includes either a single field `value`, which checks that the
+/// This struct includes either a single expectation, which checks that the
 /// field equals one exact literal, or a list `any`, which checks that the
 /// field equals **any** of the given literals (Zod's `z.enum`).
 /// # Attributes
-/// - `value`: An exact expected literal (`value: 42`).
+/// - `is`: The exact expected literal (`is: 42`). Canonical form.
+/// - `value`: Deprecated alias of `is`. Still works, but emits a
+///   deprecation warning at compile time.
 /// - `any`: A comma-separated list of accepted literals
 ///   (`any: ["admin", "mod"]` or `any: (1, 2, 3)`).
-/// Exactly one of the two must be given.
+/// Exactly one of `is`/`value` or `any` must be given.
 /// # Usage
 /// ```
 /// use rod_validation::prelude::*;
@@ -23,7 +25,7 @@ use super::{optional_braced, user_defined_error};
 /// struct MyEntity {
 ///   #[rod(
 ///        literal {
-///           value: 42,
+///           is: 42,
 ///        }
 ///   )]
 ///   my_field: i32,
@@ -39,6 +41,7 @@ use super::{optional_braced, user_defined_error};
 /// assert!(entity.validate().is_ok());
 /// ```
 pub struct RodLiteralContent {
+    /// Single expected literal: canonical `is` or deprecated `value`.
     value: Option<PatLit>,
     /// Accepted literals for `any: [...]` / `any: (...)`.
     any: Vec<PatLit>,
@@ -46,7 +49,7 @@ pub struct RodLiteralContent {
 }
 
 impl RodLiteralContent {
-    /// The single expected literal, if the `value` form was used.
+    /// The single expected literal, if the `is`/`value` form was used.
     pub(crate) fn value(&self) -> Option<&PatLit> {
         self.value.as_ref()
     }
@@ -65,8 +68,8 @@ impl Parse for RodLiteralContent {
             None => {
                 abort!(
                     input.span(),
-                    "Must specify a literal value using `value: <literal>` or `any: [literals]` inside the `literal` attribute.";
-                    help = "Example: `#[rod(Literal { value: 42 })]` or `#[rod(Literal { any: [\"a\", \"b\"] })]`"
+                    "Must specify a literal value using `is: <literal>` or `any: [literals]` inside the `literal` attribute.";
+                    help = "Example: `#[rod(Literal { is: 42 })]` or `#[rod(Literal { any: [\"a\", \"b\"] })]`"
                 )
             }
         };
@@ -78,8 +81,25 @@ impl Parse for RodLiteralContent {
             let lookahead = inner.lookahead1();
             if lookahead.peek(syn::Ident) {
                 let ident: syn::Ident = inner.parse()?;
-                match ident.to_string().as_str() {
+                let ident_str = ident.to_string();
+                match ident_str.as_str() {
+                    "is" => {
+                        // `is: <literal>`: canonical single-value form.
+                        check_already_used_attr!(value, ident.span());
+                        inner.parse::<syn::Token![:]>()?;
+                        value = Some(inner.parse()?);
+                        if let Some(msg) = message.take() {
+                            custom_error = Some(msg);
+                        }
+                    }
                     "value" => {
+                        // Deprecated alias of `is`; still works. Emitted
+                        // eagerly so no state has to be carried to codegen;
+                        // worded like rustc's own deprecation diagnostics.
+                        proc_macro_error::emit_warning!(
+                            ident.span(),
+                            "use of deprecated item `Literal::value`: use `Literal::is` instead"
+                        );
                         check_already_used_attr!(value, ident.span());
                         inner.parse::<syn::Token![:]>()?;
                         value = Some(inner.parse()?);
@@ -109,7 +129,7 @@ impl Parse for RodLiteralContent {
                         abort!(
                             ident.span(),
                             "Unknown attribute `{}`", ident;
-                            help = "Valid attributes are `value` and `any`."
+                            help = "Valid attributes are `is`, `any` (and deprecated `value`)."
                         );
                     }
                 }
@@ -129,15 +149,15 @@ impl Parse for RodLiteralContent {
             (Some(_), Some(_)) => {
                 abort!(
                     input.span(),
-                    "`Literal` accepts either `value` or `any`, not both";
+                    "`Literal` accepts one expectation (`is`/`value`) or `any`, not both";
                     help = "Use `any` when more than one literal is acceptable."
                 )
             }
             (None, None) => {
                 abort!(
                     input.span(),
-                    "Must specify a literal value using `value: <literal>` or `any: [literals]` inside the `literal` attribute.";
-                    help = "Example: `#[rod(Literal { value: 42 })]` or `#[rod(Literal { any: [\"a\", \"b\"] })]`"
+                    "Must specify a literal expectation using `is: <literal>` or `any: [literals]` inside the `literal` attribute.";
+                    help = "Example: `#[rod(Literal { is: 42 })]` or `#[rod(Literal { any: [\"a\", \"b\"] })]`"
                 )
             }
             (value, any) => {

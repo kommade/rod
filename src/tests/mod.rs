@@ -46,6 +46,16 @@ mod async_tests;
 /// Tests for newtype structs, nested error paths and multi-value literals
 mod newtype_tests;
 
+/// Tests for parse/sanitize transforms (RodParse)
+mod parse_tests;
+
+/// Tests for distinct iterables and check_all multi-issue closures
+mod phase4_tests;
+
+/// Tests for the untrusted-input adapters (serde)
+#[cfg(feature = "serde")]
+mod adapter_tests;
+
 /// Shared helpers (current-thread executor)
 mod support;
 

@@ -117,12 +117,18 @@ pub struct RodStringContent {
     starts_with: Option<LitStr>,
     ends_with: Option<LitStr>,
     includes: Option<LitStr>,
+    /// `trim = true`: whitespace-trim the field during sanitize()/parse().
+    trim: bool,
     custom_errors: [Option<LitStr>; STRING_VALIDATION_FIELDS], // length, format, starts_with, ends_with, includes
 }
 
 impl RodStringContent {
     pub(crate) fn length(&self) -> Option<&LengthOrSize> {
         self.length.as_ref()
+    }
+    /// Whether `trim = true` was requested.
+    pub(crate) fn trim(&self) -> bool {
+        self.trim
     }
     #[cfg(feature = "regex")]
     pub(crate) fn format(&self) -> Option<&StringFormat> {
@@ -308,6 +314,7 @@ impl Parse for RodStringContent {
                 starts_with: None,
                 ends_with: None,
                 includes: None,
+                trim: false,
                 custom_errors: [None, None, None, None, None],
             }),
         };
@@ -318,6 +325,7 @@ impl Parse for RodStringContent {
         let mut starts_with = None;
         let mut ends_with = None;
         let mut includes = None;
+        let mut trim = false;
         let mut message: Option<LitStr> = None;
         let mut custom_errors: [Option<LitStr>; STRING_VALIDATION_FIELDS] = [None, None, None, None, None];
 
@@ -367,6 +375,20 @@ impl Parse for RodStringContent {
                     if let Some(msg) = message.take() {
                         custom_errors[3] = Some(msg);
                     }
+                } else if ident == "trim" {
+                    // Boolean flag: bare `trim` means true; also allow
+                    // `trim = true` (possibly via `:` by mistake of habit).
+                    if inner.peek(syn::Token![=]) {
+                        let _: syn::Token![=] = inner.parse()?;
+                        let flag: syn::LitBool = inner.parse()?;
+                        trim = flag.value;
+                    } else if inner.peek(syn::Token![:]) {
+                        let _: syn::Token![:] = inner.parse()?;
+                        let flag: syn::LitBool = inner.parse()?;
+                        trim = flag.value;
+                    } else {
+                        trim = true;
+                    }
                 } else {
                     abort!(
                         ident.span(),
@@ -396,6 +418,7 @@ impl Parse for RodStringContent {
             starts_with,
             ends_with,
             includes,
+            trim,
             custom_errors,
         };
 
@@ -405,6 +428,7 @@ impl Parse for RodStringContent {
             starts_with,
             ends_with,
             includes,
+            trim,
             custom_errors,
         };
 

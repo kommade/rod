@@ -2,7 +2,7 @@
 
 pub use crate::errors::*;
 pub use crate::combinators::*;
-pub use crate::{RodFieldMeta, RodMetadata, RodValidate};
+pub use crate::{RodFieldMeta, RodMetadata, RodParse, RodValidate};
 
 /// Doctests
 /// 

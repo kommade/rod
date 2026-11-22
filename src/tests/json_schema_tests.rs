@@ -130,13 +130,13 @@ fn test_schema_literal_boolean_skip() {
     struct Mixed {
         #[rod(
             Literal {
-                value: true,
+                is: true,
             }
         )]
         enabled: bool,
         #[rod(
             Literal {
-                value: "admin",
+                is: "admin",
             }
         )]
         role: String,
@@ -268,14 +268,14 @@ fn test_schema_enum_one_of() {
         Circle(
             #[rod(
                 Literal {
-                    value: 0,
+                    is: 0,
                 }
             )]
             i32,
         ),
         Rect {
             #[rod(Literal {
-                value: true,
+                is: true,
             })]
             solid: bool,
         },

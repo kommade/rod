@@ -358,6 +358,45 @@ pub trait ValidationMetadata: RodMetadata {
 
 impl<T: RodMetadata> ValidationMetadata for T {}
 
+/// Parse-and-validate pipeline over derived types, Zod-style:
+/// transforms first, then validation of the transformed value.
+///
+/// Implemented automatically by `#[derive(RodValidate)]`. Transforms are
+/// declared per field — `trim = true` on string rules and
+/// `default = expr` on Option rules — and applied in declaration order by
+/// [`RodParse::sanitize`]. Types without transforms sanitize to themselves.
+///
+/// ```rust
+/// use rod_validation::prelude::*;
+///
+/// #[derive(RodValidate)]
+/// struct Profile {
+///     #[rod(String { length: 3..=12, trim = true })]
+///     name: String,
+///     #[rod(u8 { size: 1..=3 })]
+///     attempts: u8,
+/// }
+///
+/// // "  kim  " is trimmed before the length rule sees it.
+/// let parsed = Profile { name: "  kim  ".to_string(), attempts: 2 }.parse().unwrap();
+/// assert_eq!(parsed.name, "kim");
+/// ```
+pub trait RodParse: RodValidate + Sized {
+    /// Apply every transform the type declares, in declaration order.
+    /// Implemented by the derive; identity for transforms-free types.
+    fn sanitize(self) -> Self;
+
+    /// Sanitize, then validate the transformed value.
+    /// Zod `schema.parse(input)` equivalent.
+    fn parse(self) -> Result<Self, RodValidateErrorList> {
+        let sanitized = self.sanitize();
+        match sanitized.validate_all() {
+            Ok(()) => Ok(sanitized),
+            Err(errors) => Err(errors),
+        }
+    }
+}
+
 /// Async counterpart of [`RodValidate`].
 ///
 /// Implemented automatically by `#[derive(RodValidate)]` (there is no blanket

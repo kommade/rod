@@ -110,6 +110,8 @@ version = "0.4.0"
 dependencies = [
  "regex",
  "rod_derive",
+ "serde",
+ "serde_derive",
  "serde_json",
 ]
 

@@ -405,6 +405,9 @@ fn iterable_schema(content: &crate::types::RodIterableContent) -> Option<Json> {
             }
         }
     }
+    if content.distinct {
+        fields.push(("uniqueItems", Json::Bool(true)));
+    }
     Some(Json::obj(fields))
 }
 
