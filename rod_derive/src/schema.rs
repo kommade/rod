@@ -503,6 +503,40 @@ fn content_schema(content: &RodAttrContent) -> Option<Json> {
     }
 }
 
+/// Schema hints for unattributed third-party datetime fields (the derive's
+/// `chrono` feature, forwarded by rod_validation's `chrono` feature). The
+/// types validate trivially via blanket impls; the schema only annotates the
+/// wire format chrono's serde produces.
+#[cfg(feature = "chrono")]
+fn third_party_datetime_schema(ty: &syn::Type) -> Option<Json> {
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    let format = match path.path.segments.last()?.ident.to_string().as_str() {
+        "NaiveDate" => Some("date"),
+        "NaiveTime" => Some("time"),
+        // Zoned datetimes serialize as RFC 3339, so the standard keyword is
+        // exactly right.
+        "DateTime" => Some("date-time"),
+        // NaiveDateTime is zoneless and therefore NOT valid RFC 3339 - a
+        // strict `date-time` validator would reject the real data. The
+        // x-rod extension keeps the hint without overpromising.
+        "NaiveDateTime" => {
+            return Some(Json::obj(vec![
+                ("type", Json::s("string")),
+                ("x-rod-format", Json::s("naive-date-time")),
+            ]));
+        }
+        // Bare `Duration` is ambiguous (chrono's TimeDelta vs
+        // std::time::Duration, which serializes as {secs, nanos}), so it is
+        // deliberately left unannotated.
+        _ => None,
+    };
+    format.map(|format| {
+        Json::obj(vec![("type", Json::s("string")), ("format", Json::s(format))])
+    })
+}
+
 /// Schema for a field, plus whether the field is required. `None` means the
 /// field is skipped and should not appear in the schema at all.
 fn field_schema(field: &syn::Field) -> Option<(Option<Json>, bool)> {
@@ -527,10 +561,16 @@ fn field_schema(field: &syn::Field) -> Option<(Option<Json>, bool)> {
     match &rod_attr {
         // Fields without a `rod` attribute must implement `RodValidate`
         // themselves; we cannot introspect their rules, so emit a generic object.
-        None => Some((
-            attach(Some(Json::obj(vec![("type", Json::s("object"))]))),
-            true,
-        )),
+        None => {
+            #[cfg(feature = "chrono")]
+            if let Some(schema) = third_party_datetime_schema(&field.ty) {
+                return Some((attach(Some(schema)), true));
+            }
+            Some((
+                attach(Some(Json::obj(vec![("type", Json::s("object"))]))),
+                true,
+            ))
+        }
         Some(attr) => {
             let schema = content_schema(&attr.content);
             let required = !matches!(

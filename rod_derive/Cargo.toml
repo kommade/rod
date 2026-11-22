@@ -23,3 +23,6 @@ syn = { version = "2.0.101", features = ["derive", "extra-traits", "parsing", "f
 [features]
 default = []
 regex = []
+# No chrono dependency here: the derive only maps type names to JSON Schema
+# `format` hints; rod_validation's `chrono` feature forwards this one.
+chrono = []

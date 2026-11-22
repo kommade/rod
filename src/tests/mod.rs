@@ -83,6 +83,10 @@ mod error_report_tests;
 /// Path-aware multi-issue checks (`check_all_paths`/`async_check_all_paths`)
 mod check_paths_tests;
 
+/// Typed chrono datetimes (blanket impls, schema hints, serde bridge)
+#[cfg(feature = "chrono")]
+mod chrono_tests;
+
 /// Async validation against a real Tokio runtime (timers, spawned tasks,
 /// concurrent `join!`) — the plain async tests only use instantly-ready
 /// futures with the no-op-waker executor.

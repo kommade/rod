@@ -265,6 +265,78 @@ impl<T: RodValidate> RodValidate for Option<T> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Blanket impls for chrono's datetime types (`chrono` feature)
+//
+// A `NaiveDate`, `NaiveTime`, `NaiveDateTime`, `DateTime<Tz>` (Utc, Local,
+// FixedOffset or a chrono-tz zone) and `chrono::Duration` is **valid by
+// construction** — the type system already guarantees the value parses as a
+// real date/time — so these impls are trivial. Their purpose is structural:
+// structs holding datetimes next to validated fields compile and validate
+// without a manual impl, exactly like the std containers above. Constraint
+// checks belong at the wire boundary, via `String { format: Date }`-style
+// rules or `check` closures.
+//
+// The derive's schema generation (its own `chrono` feature, forwarded by
+// this feature) annotates such fields with the matching JSON Schema format.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "chrono")]
+mod chrono_impls {
+    use crate::RodValidate;
+    use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
+
+    macro_rules! impl_rod_validate_for_datetime {
+        ($($ty:ty),* $(,)?) => {
+            $(
+                impl RodValidate for $ty {
+                    fn validate(&self) -> Result<(), crate::errors::RodValidateError> {
+                        Ok(())
+                    }
+                    fn validate_all(&self) -> Result<(), crate::errors::RodValidateErrorList> {
+                        Ok(())
+                    }
+                    fn validate_group(
+                        &self,
+                        _group: &str,
+                    ) -> Result<(), crate::errors::RodValidateErrorList> {
+                        Ok(())
+                    }
+                    fn validate_all_groups(
+                        &self,
+                    ) -> Result<(), crate::errors::RodValidateErrorList> {
+                        Ok(())
+                    }
+                }
+            )*
+        };
+    }
+
+    impl_rod_validate_for_datetime!(NaiveDate, NaiveTime, NaiveDateTime, chrono::Duration);
+
+    // Zoned datetimes: covers `DateTime<Utc>`, `DateTime<Local>`,
+    // `DateTime<FixedOffset>` and chrono-tz's `DateTime<Tz>`.
+    impl<Tz: TimeZone> RodValidate for DateTime<Tz> {
+        fn validate(&self) -> Result<(), crate::errors::RodValidateError> {
+            Ok(())
+        }
+        fn validate_all(&self) -> Result<(), crate::errors::RodValidateErrorList> {
+            Ok(())
+        }
+        fn validate_group(
+            &self,
+            _group: &str,
+        ) -> Result<(), crate::errors::RodValidateErrorList> {
+            Ok(())
+        }
+        fn validate_all_groups(
+            &self,
+        ) -> Result<(), crate::errors::RodValidateErrorList> {
+            Ok(())
+        }
+    }
+}
+
 // Root re-exports: generated code refers to `::rod_validation::...` absolute
 // paths so it does not depend on the deriving crate's imports.
 pub use combinators::{AsyncValidator, RodParse};
