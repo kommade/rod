@@ -13,7 +13,7 @@ A powerful and flexible compile-time validation library for Rust structs and enu
 - **Comprehensive type support**: Validate strings, integers, floats, options, tuples, and custom types
 - **Flexible error handling**: Choose between fail-fast or collect-all error reporting
 - **Custom validation**: Add custom validation logic with closures
-- **Multi-issue checks**: `check_all` closures collect every problem, not just the first
+- **Multi-issue checks**: `check_all` and `async_check_all` closures collect every problem, not just the first
 - **Regex support**: Built-in regex validation for strings (with optional `regex` feature)
 - **Nested validation**: Support for complex nested data structures, including newtype structs; nested errors carry dotted field paths (`address.street: ...`)
 - **Parse pipeline**: `sanitize()` + `parse()` with per-field transforms (`trim`, `Option::default`) — normalize first, then validate
@@ -728,6 +728,8 @@ struct Signup {
 
 Types without `async_check` fields behave like `validate_all` inside the future. Because checks run against `&self`, the validated type must be `Sync`, and the returned future is always `Send` — safe to use with `tokio::spawn` and friends. The lowest-level hook, `run_async_checks`, can also be overridden manually to add whole-value async rules without touching the derive.
 
+The multi-issue pattern works async too: `async_check_all = |x| <future of messages>` awaits one closure and turns every yielded message into a `UserDefined` error (e.g. a database lookup that validates several constraints at once). It rides on the same combined report as everything else in `validate_async`. As with the sync closures, `async_check` and `async_check_all` are mutually exclusive on one field.
+
 ## Testing Utilities
 
 The `ValidationTestUtils` trait (blanket-implemented on all `RodValidate` types) makes assertions terse:
@@ -750,7 +752,7 @@ The `#[derive(RodValidate)]` macro generates the following for your types:
 - `impl RodParse` - The normalize-then-validate pipeline: `sanitize(self) -> Self` rebuilds the value with `trim`/`default` transforms applied; `parse(self)` = `sanitize()` + `validate_all()`
 - `impl RodMetadata` - Static `FIELDS: &'static [RodFieldMeta]` metadata (name, group, required) for form/UI generation
 - `impl ToJsonSchema` - JSON Schema export (generated only with the `serde` feature)
-- `impl AsyncValidator` - Async counterpart: `validate_async()` runs all sync rules plus every `async_check` field closure
+- `impl AsyncValidator` - Async counterpart: `validate_async()` runs all sync rules plus every `async_check`/`async_check_all` field closure
 
 ### Error Messages
 

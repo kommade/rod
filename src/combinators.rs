@@ -409,12 +409,16 @@ pub trait RodParse: RodValidate + Sized {
 /// 2. **Async checks**: fields declaring
 ///    `#[rod(..., async_check = |x| future_of_bool)]` get a generated
 ///    `run_async_checks` override that awaits each closure (e.g. a database
-///    lookup) and collects failures.
+///    lookup) and collects failures. `async_check_all = |x| future_of
+///    _messages` is the multi-issue counterpart: every message the awaited
+///    future yields becomes one `UserDefined` error. The two are mutually
+///    exclusive on the same field (compile error).
 ///
 /// `validate_async` therefore validates *everything*: all synchronous rules
-/// first, then every `async_check`, returning one combined error list.
-/// Async-check closures must return `Send` futures; since checks run against
-/// `&self`, the validated type is additionally required to be `Sync`.
+/// first, then every `async_check`/`async_check_all`, returning one combined
+/// error list. Async-check closures must return `Send` futures; since checks
+/// run against `&self`, the validated type is additionally required to be
+/// `Sync`.
 pub trait AsyncValidator: RodValidate + Sync {
     /// Hook for the derive-generated `async_check` steps.
     ///

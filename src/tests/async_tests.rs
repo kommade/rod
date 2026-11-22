@@ -1,4 +1,5 @@
-//! Tests for `async_check` fields and the `AsyncValidator` trait.
+//! Tests for `async_check`/`async_check_all` fields and the
+//! `AsyncValidator` trait.
 
 use crate::prelude::*;
 use super::support::block_on;
@@ -231,4 +232,126 @@ fn double_reference_async_check() {
     assert!(errors
         .iter()
         .any(|e| matches!(e, RodValidateError::CheckFailed(path) if *path == "token")), "{}", errors);
+}
+
+// ---------------------------------------------------------------------------
+// async_check_all (multi-issue, may await)
+// ---------------------------------------------------------------------------
+
+/// One awaited closure reporting every problem it finds.
+#[derive(RodValidate)]
+struct AsyncMultiCheck {
+    #[rod(
+        String { length: 5..=12 },
+        async_check_all = |u: &String| std::future::ready({
+            let mut issues = Vec::new();
+            if !u.starts_with("user_") {
+                issues.push("must start with user_");
+            }
+            if u.chars().any(|c| c.is_ascii_uppercase()) {
+                issues.push("must be lowercase");
+            }
+            issues
+        })
+    )]
+    username: String,
+}
+
+#[test]
+fn async_check_all_reports_every_issue() {
+    let user = AsyncMultiCheck {
+        username: "BadHandle99".to_string(), // length ok; both async issues fire
+    };
+    // Sync rules pass...
+    assert!(user.validate_all().is_ok(), "{}", user.validate_all().unwrap_err());
+    // ...the awaited closure yields BOTH issues.
+    let errors = block_on(user.validate_async()).unwrap_err();
+    assert_eq!(errors.len(), 2, "{}", errors);
+    for expected in ["must start with user_", "must be lowercase"] {
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, RodValidateError::UserDefined(msg) if *msg == expected)),
+            "missing `{}` in {}",
+            expected,
+            errors
+        );
+    }
+}
+
+#[test]
+fn async_check_all_empty_vec_passes() {
+    let user = AsyncMultiCheck {
+        username: "user_kim".to_string(),
+    };
+    assert!(block_on(user.validate_async()).is_ok());
+}
+
+#[test]
+fn async_check_all_combines_with_sync_rules() {
+    // "kit" fails the sync length rule AND both async issues.
+    let user = AsyncMultiCheck {
+        username: "Kit".to_string(),
+    };
+    let errors = block_on(user.validate_async()).unwrap_err();
+    assert_eq!(errors.len(), 3, "{}", errors);
+    assert!(errors.iter().any(|e| matches!(e, RodValidateError::String(_))));
+    assert_eq!(errors.iter().filter(|e| matches!(e, RodValidateError::UserDefined(_))).count(), 2);
+}
+
+#[test]
+fn message_applies_to_async_check_all() {
+    #[derive(RodValidate)]
+    struct Reserved {
+        #[rod(
+            String { length: 2..=10 },
+            message: "username is reserved",
+            async_check_all = |u: &String| std::future::ready({
+                if u.eq_ignore_ascii_case("root") { vec!["ignored"] } else { vec![] }
+            })
+        )]
+        username: String,
+    }
+
+    let user = Reserved { username: "ROOT".to_string() };
+    let errors = block_on(user.validate_async()).unwrap_err();
+    assert_eq!(errors.len(), 1, "{}", errors);
+    assert!(errors
+        .iter()
+        .any(|e| matches!(e, RodValidateError::UserDefined(msg) if msg == "username is reserved")), "{}", errors);
+}
+
+#[test]
+fn enum_async_check_all_only_active_variant() {
+    #[derive(RodValidate)]
+    enum Payment {
+        Card {
+            #[rod(
+                String { length: 4 },
+                async_check_all = |pan: &String| std::future::ready({
+                    let mut issues = Vec::new();
+                    if !pan.chars().all(|c| c.is_ascii_digit()) { issues.push("digits only"); }
+                    if !pan.starts_with("4") { issues.push("visa expected"); }
+                    issues
+                })
+            )]
+            number: String,
+        },
+        Cash,
+    }
+
+    // Both issues fire on the active variant.
+    let bad = Payment::Card { number: "12ab".to_string() };
+    let errors = block_on(bad.validate_async()).unwrap_err();
+    assert_eq!(errors.len(), 2, "{}", errors);
+
+    // Unit variant: no async checks to run.
+    assert!(block_on(Payment::Cash.validate_async()).is_ok());
+}
+
+#[test]
+fn async_check_all_conflicts_with_async_check() {
+    // async_check + async_check_all on one field is a compile error,
+    // asserted by the compile_fail doctest (proc-macro aborts fire during
+    // compilation, not at runtime).
 }
