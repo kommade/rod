@@ -644,9 +644,7 @@ The macro generates validation code that:
 #### Limitations
 
 1. **Union types**: Not supported (will generate `todo!()` panic)
-2. **Double references**: `&&T` types are not allowed
-3. **Custom validation closures**: Must return `bool` type. Async closures (`async_check`) must return a `Send` future resolving to `bool`, and the type must be `Sync`
-4. **Regex features**: Require the `regex` crate feature to be enabled
+2. **Custom validation closures**: Must return `bool` type. Async closures (`async_check`) must return a `Send` future resolving to `bool`, and the type must be `Sync`
 
 ## Rust Features
 
