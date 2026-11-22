@@ -13,8 +13,11 @@ A powerful and flexible compile-time validation library for Rust structs and enu
 - **Comprehensive type support**: Validate strings, integers, floats, options, tuples, and custom types
 - **Flexible error handling**: Choose between fail-fast or collect-all error reporting
 - **Custom validation**: Add custom validation logic with closures
+- **Multi-issue checks**: `check_all` closures collect every problem, not just the first
 - **Regex support**: Built-in regex validation for strings (with optional `regex` feature)
-- **Nested validation**: Support for complex nested data structures
+- **Nested validation**: Support for complex nested data structures, including newtype structs; nested errors carry dotted field paths (`address.street: ...`)
+- **Parse pipeline**: `sanitize()` + `parse()` with per-field transforms (`trim`, `Option::default`) — normalize first, then validate
+- **Untrusted input**: JSON adapters that deserialize raw bytes/strings into your type and validate it, reporting which stage failed (with `serde` feature)
 - **Per-validation custom errors**: Attach tailored messages to individual validation rules for precise feedback
 - **Validation groups**: Tag fields with `group = "..."` and validate them selectively (multi-step forms, wizards)
 - **Combinators**: `any`/`one`-of, conditional, cross-field and pipeline validation helpers
@@ -37,7 +40,7 @@ For regex support:
 cargo add rod_validation --features regex
 ```
 
-For JSON Schema export:
+For JSON Schema export and untrusted-input adapters:
 
 ```sh
 cargo add rod_validation --features serde
@@ -216,15 +219,24 @@ struct TupleExample {
 
 ### Literal Validation
 
+`is:` pins a single accepted value; `any:` accepts any of the listed values (an enum-like choice):
+
 ```rust
 #[derive(RodValidate)]
 struct LiteralExample {
     #[rod(Literal {
-        value: "expected_value",
+        is: "expected_value",
     })]
     field: String,
+
+    #[rod(Literal {
+        any: ["admin", "mod", "guest"],   // also accepts ("admin", "mod", "guest")
+    })]
+    role: String,
 }
 ```
+
+The old `value: "..."` spelling of `is:` still compiles but emits a deprecation warning; use `is:`.
 
 ### Custom Validation
 
@@ -241,6 +253,38 @@ struct CustomExample {
 }
 ```
 
+### Multi-Issue Custom Validation (check_all)
+
+`check` stops at the first failing field; `check_all` runs a closure that returns **every** problem it found. Use it when one field can be wrong in several ways and the user should see all issues at once:
+
+```rust
+#[derive(RodValidate)]
+struct Password {
+    #[rod(
+        String {
+            length: 8..=30,
+        },
+        check_all = |p: &String| {
+            let mut issues = Vec::new();
+            if !p.chars().any(|c| c.is_ascii_digit()) {
+                issues.push("needs a digit");
+            }
+            if !p.chars().any(|c| c.is_ascii_uppercase()) {
+                issues.push("needs an uppercase letter");
+            }
+            issues
+        }
+    )]
+    password: String,
+}
+
+// "lowercase" fails both: two UserDefined errors from one closure.
+let errors = Password { password: "lowercase".into() }.validate_all().unwrap_err();
+assert_eq!(errors.len(), 2);
+```
+
+Issues are reported as `RodValidateError::UserDefined`. `check` and `check_all` are mutually exclusive on the same field (compile error). A field may also carry **only** `check_all` (no rule): validation then first delegates to the field type's own `RodValidate` impl, and the closure runs on top.
+
 ### Iterable Validation
 
 ```rust
@@ -251,10 +295,13 @@ struct IterableExample {
             length: 3..=20,
         },
         length: 1..=10,
+        distinct,               // reject duplicate items (item type must be Eq + Hash)
     })]
     tags: Vec<String>,
 }
 ```
+
+`distinct` may also be spelled `distinct = false` (the default) — e.g. to make the intention explicit. With the `serde` feature, `distinct` maps to `"uniqueItems": true` in the exported JSON Schema.
 
 ## Error Handling
 
@@ -341,6 +388,28 @@ struct Person {
     address: Address,
 }
 ```
+
+Nested errors keep their **field path**: `Display` renders them dotted (`address.city: ...`) and `RodValidateError::path()` returns the outermost-first segment chain, so both string and structured consumers get full issue paths.
+
+### Newtype structs
+
+`.0`-style wrapper structs (compile-time brand/id types) validate out of the box — the inner field flows through attribute rules and custom closures like any other field:
+
+```rust
+use rod_validation::prelude::*;
+
+#[derive(RodValidate)]
+struct Email(#[rod(String { length: 5..=100 })] String);
+
+let good = Email("user@example.com".to_string());
+assert!(good.validate().is_ok());
+
+let bad = Email("nope".to_string());
+let err = bad.validate().unwrap_err();
+assert!(matches!(err, RodValidateError::String(_)));
+```
+
+The inner field is named `__inner` in generated metadata, JSON Schema and custom-check paths, since it has no declared name. Everything composes: `check`, `async_check`, groups, and even wrapping *another* `RodValidate` type (delegation wraps errors in the `Nested` path wrapper). Unit structs validate trivially; multi-field tuple structs are rejected at compile time (use named fields).
 
 ## Enums
 
@@ -483,6 +552,80 @@ let errors = user.pipeline()
 
 Use `.all_errors()` instead of `.result()` when you want the collected list without the `Result` wrapper.
 
+## Parse Pipeline (normalize, then validate)
+
+```rust
+use rod_validation::prelude::*;
+
+#[derive(RodValidate)]
+struct Profile {
+    #[rod(String {
+        length: 3..=7,
+        trim,                        // sanitize() applies String::trim
+    })]
+    name: String,
+    #[rod(Option {
+        String { length: 3.. },
+        default: "guest",            // None becomes Some("guest") during sanitize()
+    })]
+    nickname: Option<String>,
+}
+
+// Without the transform the 9-char value would fail the 3..=7 rule:
+let parsed = Profile {
+    name: "  kim    ".to_string(),
+    nickname: None,
+}
+.parse()
+.unwrap();
+assert_eq!(parsed.name, "kim");
+assert_eq!(parsed.nickname.as_deref(), Some("guest"));
+```
+
+`parse` is [`RodParse::sanitize`] followed by `validate_all`: `sanitize()` consumes the value, rebuilds it applying every field transform in declaration order (string `trim`, `Option` `default`), then the rules run against the **transformed** value — so length checks measure the trimmed string. Normalization and validation happen in one step, with all violations collected.
+
+`.sanitize()` alone transforms without running any rules, for pipelines that normalize in one layer and validate in another.
+
+Supported transforms today:
+
+- `String { ..., trim }` — `trim = true` / `trim: true` are the same as the bare flag
+- `Option { <rule>, default: expr }` — fills `None` (ignored when no inner rule is declared)
+
+## Parsing Untrusted Input
+
+The derive validates already-typed Rust values. For untrusted input, the `serde` feature adds adapters that take raw JSON, deserialize into your type, then run its validation — and report exactly which stage failed:
+
+```rust
+use rod_validation::adapters::{json, ParseError};
+use rod_validation::prelude::*;
+
+#[derive(Debug, serde::Deserialize, RodValidate)]
+struct Signup {
+    #[rod(String { length: 3..=12 })]
+    username: String,
+    #[rod(u8 { size: 1..=3 })]
+    attempts: u8,
+}
+
+let raw = br#"{ "username": "kim", "attempts": 2 }"#;
+let signup: Signup = json::parse(raw).unwrap();
+
+// Well-formed JSON that breaks the rules -> Validation (not a JSON error):
+let raw = br#"{ "username": "k", "attempts": 9 }"#;
+let err = json::parse::<Signup>(raw).unwrap_err();
+let ParseError::Validation(errors) = err else {
+    panic!("expected rule violations, not a JSON error");
+};
+assert_eq!(errors.len(), 2); // length + size violations
+```
+
+The failure kind is an enum, so there is no ambiguity between shapes:
+
+- `ParseError::Deserialize(serde_json::Error)` — not valid JSON, type mismatch, missing/unknown field (unknown fields are rejected when the type opts into `#[serde(deny_unknown_fields)]`, strict mode)
+- `ParseError::Validation(RodValidateErrorList)` — deserialized fine, but the rules rejected it
+
+Helpers (`validation()`, `is_deserialize_failure()`, `is_validation_failure()`) cover the quick-branch cases. Three entry points exist: `json::parse(&[u8])`, `json::parse_str(&str)` and `json::parse_value(serde_json::Value)` for input that is already parsed (e.g. you deserialize from an envelope yourself first). The bridge deserializes verbatim — implicit transforms do not apply; call `.parse()` on the result when you want `trim`/`default` normalization.
+
 ## Field Metadata & Metrics
 
 The derive generates `impl RodMetadata` exposing static metadata about every validated field — no runtime reflection:
@@ -545,11 +688,12 @@ renders:
 
 Mapping summary:
 
-- Strings/iterables: `minLength`/`maxLength`, `minItems`/`maxItems`, `items`
+- Strings/iterables: `minLength`/`maxLength`, `minItems`/`maxItems`, `items`; `distinct` → `uniqueItems: true`
 - Numbers: `minimum`/`maximum` (plus `exclusiveMaximum`/`exclusiveMinimum` for open ranges and signs), `multipleOf` for `step`
-- `Literal { value }` → `const`; `Option {}` → `"type": "null"`; tuples → `prefixItems`; enums → `oneOf`
+- `Literal { is }` → `const`; `Literal { any: [...] }` → typed `enum`; `Option {}` → `"type": "null"`; tuples → `prefixItems`; enums → `oneOf`
 - Built-in formats → `format` (`email`, `uri`, `uuid`, `ipv4`, `ipv6`, `date-time`; requires `regex`), custom regex → `pattern`
-- Custom `check` closures are not representable in JSON Schema and are omitted
+- Custom `check`/`check_all` closures are not representable in JSON Schema and are omitted
+- Newtype structs export the schema of their inner rule, not an opaque object
 
 ## Async Validation
 
@@ -603,6 +747,7 @@ The `#[derive(RodValidate)]` macro generates the following for your types:
 - `validate_all(&self) -> Result<(), RodValidateErrorList>` - Collect all errors before returning
 - `validate_group(&self, group: &str) -> Result<(), RodValidateErrorList>` - Validate only fields tagged with the given group (plus ungrouped fields); generated when the type uses `group` tags, otherwise falls back to `validate_all`
 - `validate_all_groups(&self) -> Result<(), RodValidateErrorList>` - Validate every field, regardless of groups
+- `impl RodParse` - The normalize-then-validate pipeline: `sanitize(self) -> Self` rebuilds the value with `trim`/`default` transforms applied; `parse(self)` = `sanitize()` + `validate_all()`
 - `impl RodMetadata` - Static `FIELDS: &'static [RodFieldMeta]` metadata (name, group, required) for form/UI generation
 - `impl ToJsonSchema` - JSON Schema export (generated only with the `serde` feature)
 - `impl AsyncValidator` - Async counterpart: `validate_async()` runs all sync rules plus every `async_check` field closure
@@ -650,7 +795,7 @@ The macro generates validation code that:
 
 - **Default features**: none
 - **`regex`**: Enables regex-based string format validation
-- **`serde`**: Enables generated JSON Schema export (pulls in `serde_json`)
+- **`serde`**: Enables JSON Schema export, the untrusted-input JSON adapters, and `serde`-gated schema tests (pulls in `serde` + `serde_json`)
 
 ## Documentation
 

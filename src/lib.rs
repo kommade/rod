@@ -55,8 +55,8 @@ pub trait RodValidate {
     }
 }
 
-/// `check_all` runs a custom closure that reports **every** issue it finds
-/// (like Zod's `superRefine`), instead of failing fast like a plain
+/// `check_all` runs a custom closure that reports **every** issue it finds,
+/// instead of failing fast like a plain
 /// `check = |x| bool` closure. Use it when one field can be wrong in several
 /// ways and the user should see all of them at once:
 ///

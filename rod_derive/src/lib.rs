@@ -606,7 +606,8 @@ struct RodCheck {
 
 /// Parsed `check_all = |x| ...` attribute. The closure returns an iterator
 /// (or Vec) of error messages; every element becomes one `UserDefined`
-/// error. Zod `superRefine`-style multi-issue checks.
+/// error. Multi-issue checks: all reported problems are collected, not
+/// just the first.
 struct RodCheckAll {
     closure: ExprClosure,
     span: proc_macro2::Span,

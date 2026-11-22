@@ -1,5 +1,5 @@
-//! Tests for Phase 1 Zod-parity features: newtype structs, nested error
-//! paths, and multi-value literals.
+//! Tests for brand/newtype structs, nested error paths, and multi-value
+//! literals.
 
 use crate::prelude::*;
 
@@ -256,7 +256,6 @@ fn literal_value_deprecated_still_works() {
     // `value:` is the deprecated alias of `is:`; itself it must still
     // validate correctly (the deprecation warning is emitted at compile
     // time by the derive).
-    #![allow(deprecated)]
     #[derive(RodValidate)]
     struct Mode {
         #[rod(Literal { value: 42 })]

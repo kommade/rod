@@ -1,7 +1,7 @@
 //! Adapters for validating **untrusted input**.
 //!
 //! rod derives work on already-typed Rust values; these adapters close the
-//! gap to Zod's `schema.safeParse(unknown)`: take raw bytes/JSON, deserialize
+//! gap for untrusted input: take raw bytes/JSON, deserialize
 //! into the target type and run its validation, reporting exactly what went
 //! wrong (deserialize failure **or** the collected rule violations).
 //!

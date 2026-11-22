@@ -9,7 +9,7 @@ use super::{optional_braced, user_defined_error};
 /// It is used to parse and validate literal attributes in the `#[rod]` attribute macro.
 /// This struct includes either a single expectation, which checks that the
 /// field equals one exact literal, or a list `any`, which checks that the
-/// field equals **any** of the given literals (Zod's `z.enum`).
+/// field equals **any** of the given literals (an enum-like value set).
 /// # Attributes
 /// - `is`: The exact expected literal (`is: 42`). Canonical form.
 /// - `value`: Deprecated alias of `is`. Still works, but emits a

@@ -1,4 +1,4 @@
-//! Tests for Phase-3 parse/sanitize/transforms (Zod `schema.parse`).
+//! Tests for the parse pipeline: sanitize/transforms before validation.
 
 use crate::prelude::*;
 

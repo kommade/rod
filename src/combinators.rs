@@ -358,7 +358,7 @@ pub trait ValidationMetadata: RodMetadata {
 
 impl<T: RodMetadata> ValidationMetadata for T {}
 
-/// Parse-and-validate pipeline over derived types, Zod-style:
+/// Parse-and-validate pipeline over derived types:
 /// transforms first, then validation of the transformed value.
 ///
 /// Implemented automatically by `#[derive(RodValidate)]`. Transforms are
@@ -387,7 +387,7 @@ pub trait RodParse: RodValidate + Sized {
     fn sanitize(self) -> Self;
 
     /// Sanitize, then validate the transformed value.
-    /// Zod `schema.parse(input)` equivalent.
+    /// The `schema.parse(input)` equivalent.
     fn parse(self) -> Result<Self, RodValidateErrorList> {
         let sanitized = self.sanitize();
         match sanitized.validate_all() {

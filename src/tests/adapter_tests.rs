@@ -112,7 +112,7 @@ fn newtype_through_bridge() {
 
 #[test]
 fn deny_unknown_fields_pattern() {
-    // Zod `.strict()`: serde's own attribute rejects unknown keys at the
+    // Strict mode: serde's own attribute rejects unknown keys at the
     // deserialize stage, before rod rules run.
     #[derive(Debug, Deserialize, RodValidate)]
     #[serde(deny_unknown_fields)]

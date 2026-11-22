@@ -1,5 +1,5 @@
-//! Tests for Phase-4 features: `distinct` on iterables and `check_all`
-//! multi-issue closures (Zod `superRefine`).
+//! Tests for `distinct` on iterables and `check_all`
+//! multi-issue closures.
 
 use crate::prelude::*;
 
@@ -155,7 +155,7 @@ fn distinct_emits_unique_items_schema() {
 }
 
 // ---------------------------------------------------------------------------
-// check_all (multi-issue, Zod superRefine)
+// check_all (multi-issue collection)
 // ---------------------------------------------------------------------------
 
 #[test]
