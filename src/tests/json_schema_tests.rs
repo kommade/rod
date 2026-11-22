@@ -73,6 +73,20 @@ fn test_schema_string_format_with_regex_feature() {
         }
         let schema = WithFormat::to_json_schema();
         assert_eq!(schema["properties"]["email"]["format"], "email");
+
+        #[derive(RodValidate)]
+        struct WithNewFormats {
+            #[rod(String { format: DateTime })]
+            occurred_at: String,
+            #[rod(String { format: Duration })]
+            ttl: String,
+            #[rod(String { format: Ulid })]
+            ref_id: String,
+        }
+        let schema = WithNewFormats::to_json_schema();
+        assert_eq!(schema["properties"]["occurred_at"]["format"], "date-time");
+        assert_eq!(schema["properties"]["ttl"]["format"], "duration");
+        assert_eq!(schema["properties"]["ref_id"]["format"], "ulid");
     }
 }
 
@@ -130,13 +144,13 @@ fn test_schema_literal_boolean_skip() {
     struct Mixed {
         #[rod(
             Literal {
-                value: true,
+                is: true,
             }
         )]
         enabled: bool,
         #[rod(
             Literal {
-                value: "admin",
+                is: "admin",
             }
         )]
         role: String,
@@ -238,6 +252,34 @@ fn test_schema_iterable_and_tuple() {
 }
 
 #[test]
+fn test_schema_map_field() {
+    use std::collections::HashMap;
+
+    #[derive(RodValidate)]
+    struct Collections {
+        #[rod(
+            Map {
+                key: String { length: 1..=10 },
+                value: i32 { size: 1..=99 },
+                length: 1..=3,
+            }
+        )]
+        amounts: HashMap<String, i32>,
+    }
+
+    let schema = Collections::to_json_schema();
+    let amounts = &schema["properties"]["amounts"];
+    // Maps are JSON objects whose values carry the `value` rule; the entry
+    // count becomes min/maxProperties. Key rules are runtime-only.
+    assert_eq!(amounts["type"], "object");
+    assert_eq!(amounts["additionalProperties"]["type"], "integer");
+    assert_eq!(amounts["additionalProperties"]["minimum"], 1);
+    assert_eq!(amounts["additionalProperties"]["maximum"], 99);
+    assert_eq!(amounts["minProperties"], 1);
+    assert_eq!(amounts["maxProperties"], 3);
+}
+
+#[test]
 fn test_schema_nested_custom_struct() {
     #[derive(RodValidate)]
     struct Inner {
@@ -268,14 +310,14 @@ fn test_schema_enum_one_of() {
         Circle(
             #[rod(
                 Literal {
-                    value: 0,
+                    is: 0,
                 }
             )]
             i32,
         ),
         Rect {
             #[rod(Literal {
-                value: true,
+                is: true,
             })]
             solid: bool,
         },

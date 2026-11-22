@@ -1,6 +1,6 @@
 [package]
 name = "rod_derive"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 authors = ["kommade"]
 description = "Procedural macro for the Rod Validation library"
@@ -23,3 +23,8 @@ syn = { version = "2.0.101", features = ["derive", "extra-traits", "parsing", "f
 [features]
 default = []
 regex = []
+# No chrono/uuid/url dependency here: the derive only maps type names to
+# JSON Schema `format` hints; rod_validation's features forward these ones.
+chrono = []
+uuid = []
+url = []

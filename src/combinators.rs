@@ -358,6 +358,45 @@ pub trait ValidationMetadata: RodMetadata {
 
 impl<T: RodMetadata> ValidationMetadata for T {}
 
+/// Parse-and-validate pipeline over derived types:
+/// transforms first, then validation of the transformed value.
+///
+/// Implemented automatically by `#[derive(RodValidate)]`. Transforms are
+/// declared per field — `trim = true` on string rules and
+/// `default = expr` on Option rules — and applied in declaration order by
+/// [`RodParse::sanitize`]. Types without transforms sanitize to themselves.
+///
+/// ```rust
+/// use rod_validation::prelude::*;
+///
+/// #[derive(RodValidate)]
+/// struct Profile {
+///     #[rod(String { length: 3..=12, trim = true })]
+///     name: String,
+///     #[rod(u8 { size: 1..=3 })]
+///     attempts: u8,
+/// }
+///
+/// // "  kim  " is trimmed before the length rule sees it.
+/// let parsed = Profile { name: "  kim  ".to_string(), attempts: 2 }.parse().unwrap();
+/// assert_eq!(parsed.name, "kim");
+/// ```
+pub trait RodParse: RodValidate + Sized {
+    /// Apply every transform the type declares, in declaration order.
+    /// Implemented by the derive; identity for transforms-free types.
+    fn sanitize(self) -> Self;
+
+    /// Sanitize, then validate the transformed value.
+    /// The `schema.parse(input)` equivalent.
+    fn parse(self) -> Result<Self, RodValidateErrorList> {
+        let sanitized = self.sanitize();
+        match sanitized.validate_all() {
+            Ok(()) => Ok(sanitized),
+            Err(errors) => Err(errors),
+        }
+    }
+}
+
 /// Async counterpart of [`RodValidate`].
 ///
 /// Implemented automatically by `#[derive(RodValidate)]` (there is no blanket
@@ -370,13 +409,22 @@ impl<T: RodMetadata> ValidationMetadata for T {}
 /// 2. **Async checks**: fields declaring
 ///    `#[rod(..., async_check = |x| future_of_bool)]` get a generated
 ///    `run_async_checks` override that awaits each closure (e.g. a database
-///    lookup) and collects failures.
+///    lookup) and collects failures. `async_check_all = |x| future_of
+///    _messages` is the multi-issue counterpart: every message the awaited
+///    future yields becomes one `UserDefined` error. The two are mutually
+///    exclusive on the same field (compile error).
 ///
 /// `validate_async` therefore validates *everything*: all synchronous rules
-/// first, then every `async_check`, returning one combined error list.
-/// Async-check closures must return `Send` futures; since checks run against
-/// `&self`, the validated type is additionally required to be `Sync`.
-pub trait AsyncValidator: RodValidate + Sync {
+/// first, then every `async_check`/`async_check_all`, returning one combined
+/// error list.
+///
+/// The `Sync` bound lives on the **async methods**, not on the trait itself:
+/// async checks run against `&self` inside `Send` futures, so only callers
+/// of `validate_async`/`run_async_checks` need the validated type to be
+/// `Sync` (as most web types are). Structs that are intentionally
+/// single-threaded — e.g. holding `Rc` fields or non-`Sync` futures — still
+/// derive fine; they simply cannot call the async methods.
+pub trait AsyncValidator: RodValidate {
     /// Hook for the derive-generated `async_check` steps.
     ///
     /// Returns the errors produced by the type's async checks. The default
@@ -384,7 +432,10 @@ pub trait AsyncValidator: RodValidate + Sync {
     /// declaring at least one `async_check`.
     fn run_async_checks(
         &self,
-    ) -> impl std::future::Future<Output = Vec<RodValidateError>> + Send {
+    ) -> impl std::future::Future<Output = Vec<RodValidateError>> + Send
+    where
+        Self: Sync,
+    {
         std::future::ready(Vec::new())
     }
 
@@ -392,7 +443,10 @@ pub trait AsyncValidator: RodValidate + Sync {
     /// all synchronous rules plus every `async_check`.
     fn validate_async(
         &self,
-    ) -> impl std::future::Future<Output = Result<(), RodValidateErrorList>> + Send {
+    ) -> impl std::future::Future<Output = Result<(), RodValidateErrorList>> + Send
+    where
+        Self: Sync,
+    {
         async move {
             let mut errors = match self.validate_all() {
                 Ok(()) => RodValidateErrorList::new(),

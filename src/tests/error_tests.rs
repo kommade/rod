@@ -111,7 +111,7 @@ fn test_per_validation_custom_errors() {
         #[rod(
             Literal {
                 ?"literal"
-                value: true,
+                is: true,
             }
         )]
         literal_field: bool,

@@ -16,8 +16,8 @@ macro_rules! check_already_used_attr {
 pub(crate) const STRING_VALIDATION_FIELDS: usize = 5;
 /// Number of validation fields for Integer type (size, sign, step)
 pub(crate) const INTEGER_VALIDATION_FIELDS: usize = 3;
-/// Number of validation fields for Float type (size, sign, type)
-pub(crate) const FLOAT_VALIDATION_FIELDS: usize = 3;
+/// Number of validation fields for Float type (size, sign, type, step)
+pub(crate) const FLOAT_VALIDATION_FIELDS: usize = 4;
 
 /// `LengthOrSize` is an enum that represents either an exact value or a range.
 /// It is used to specify the length (for strings) or size (for integers and floats) of a field.
@@ -314,3 +314,14 @@ pub use custom::CustomContent;
 
 mod iterable;
 pub use iterable::RodIterableContent;
+
+mod map;
+pub use map::RodMapContent;
+
+mod datetime;
+pub use datetime::{RodDateContent, RodNaiveDateTimeContent, RodTimeContent, RodZonedDateTimeContent};
+
+mod uuid_rule;
+pub use uuid_rule::RodUuidContent;
+mod url_rule;
+pub use url_rule::RodUrlContent;

@@ -27,10 +27,10 @@ impl Parse for RodBooleanContent {
 }
 
 impl RodBooleanContent {
-    pub(crate) fn get_validations(&self, _field_name: &Ident, _wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    pub(crate) fn get_validations(&self, _field_name: &Ident, _wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, _delegate: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         quote! {}
     }
-    pub(crate) fn get_validations_with_custom_error(&self, _field_name: &Ident, _wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, _custom_error: &LitStr) -> proc_macro2::TokenStream {
+    pub(crate) fn get_validations_with_custom_error(&self, _field_name: &Ident, _wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, _delegate: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, _custom_error: &LitStr) -> proc_macro2::TokenStream {
         quote! {}
     }
 }

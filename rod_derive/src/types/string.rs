@@ -18,6 +18,27 @@ mod regex_literals {
     pub(crate) const IPV4_REGEX: &str = r#"^(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"#;
     pub(crate) const IPV6_REGEX: &str = r#"^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$"#;
     pub(crate) const DATETIME_REGEX: &str = r#"^(?:\d{4})-(?:\d{2})-(?:\d{2})T(?:\d{2}):(?:\d{2}):(?:\d{2}(?:\.\d*)?)(?:(?:-(?:\d{2}):(?:\d{2})|Z)?)$"#;
+    /// `Date` — calendar date only (`YYYY-MM-DD`, months 01-12, days 01-31).
+    pub(crate) const DATE_REGEX: &str = r#"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$"#;
+    /// `Time` — time of day with optional (fractional) seconds and zone
+    /// offset (`HH:MM`, `HH:MM:SS(.fff)`, trailing `Z` or `±HH:MM`).
+    pub(crate) const TIME_REGEX: &str = r#"^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d+)?)?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)?$"#;
+    /// `Duration` — ISO 8601 duration (`P3Y6M4DT12H30M5S`, `PT1H`, `P1D`).
+    /// Written without lookaheads (the `regex` crate has none): the two
+    /// alternations force at least one Y/M/W/D **or** one H/M/S component,
+    /// so bare `P`/`PT` (empty durations) are rejected.
+    pub(crate) const DURATION_REGEX: &str = r#"^P((((\d+Y)(\d+M)?(\d+W)?(\d+D)?)|((\d+Y)?(\d+M)(\d+W)?(\d+D)?)|((\d+Y)?(\d+M)?(\d+W)(\d+D)?)|((\d+Y)?(\d+M)?(\d+W)?(\d+D)))(T(\d+H)?(\d+M)?(\d+(\.\d+)?S)?)?|T((\d+H)(\d+M)?(\d+(\.\d+)?S)?|(\d+H)?(\d+M)(\d+(\.\d+)?S)?|(\d+H)?(\d+M)?(\d+(\.\d+)?S)))$"#;
+    /// `Base64` — RFC 4648 with relaxed padding (`dGVzdA==`, `dGVzdA`,
+    /// per-group `=`/`==` accepted; leftover single characters rejected).
+    pub(crate) const BASE64_REGEX: &str = r#"^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}(==)?|[A-Za-z0-9+/]{3}=)?$"#;
+    /// `Ulid` — 26 characters of Crockford base32 (`I`, `L`, `O`, `U`
+    /// excluded), either case.
+    pub(crate) const ULID_REGEX: &str = r#"^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$"#;
+    /// `Cuid` — `c` followed by at least 8 non-whitespace, non-dash
+    /// characters (the cuid v1 shape, case-insensitive).
+    pub(crate) const CUID_REGEX: &str = r#"(?i)^c[^\s-]{8,}$"#;
+    /// `Cuid2` — 24+ alphanumeric characters (cuid2's default length 24).
+    pub(crate) const CUID2_REGEX: &str = r#"^[0-9a-zA-Z]{24,}$"#;
 }
 
 /// `StringFormat` is an enum that represents the format of a string field.
@@ -32,6 +53,13 @@ pub(crate) enum StringFormat {
     Ipv4,
     Ipv6,
     DateTime,
+    Date,
+    Time,
+    Duration,
+    Base64,
+    Ulid,
+    Cuid,
+    Cuid2,
 }
 
 #[cfg(feature = "regex")]
@@ -45,6 +73,13 @@ impl ToTokens for StringFormat {
             StringFormat::Ipv4 => tokens.extend(quote!("Ipv4")),
             StringFormat::Ipv6 => tokens.extend(quote!("Ipv6")),
             StringFormat::DateTime => tokens.extend(quote!("DateTime")),
+            StringFormat::Date => tokens.extend(quote!("Date")),
+            StringFormat::Time => tokens.extend(quote!("Time")),
+            StringFormat::Duration => tokens.extend(quote!("Duration")),
+            StringFormat::Base64 => tokens.extend(quote!("Base64")),
+            StringFormat::Ulid => tokens.extend(quote!("Ulid")),
+            StringFormat::Cuid => tokens.extend(quote!("Cuid")),
+            StringFormat::Cuid2 => tokens.extend(quote!("Cuid2")),
         }
     }
 }
@@ -65,9 +100,16 @@ impl Parse for StringFormat {
                 "Ipv4" => Ok(StringFormat::Ipv4),
                 "Ipv6" => Ok(StringFormat::Ipv6),
                 "DateTime" => Ok(StringFormat::DateTime),
+                "Date" => Ok(StringFormat::Date),
+                "Time" => Ok(StringFormat::Time),
+                "Duration" => Ok(StringFormat::Duration),
+                "Base64" => Ok(StringFormat::Base64),
+                "Ulid" => Ok(StringFormat::Ulid),
+                "Cuid" => Ok(StringFormat::Cuid),
+                "Cuid2" => Ok(StringFormat::Cuid2),
                 _ => abort!(
                     ident.span(), "Unknown string format `{}`", ident;
-                    help = "Valid string formats are: Email, Url, Uuid, Ipv4, Ipv6, DateTime, or a custom regex string literal.";
+                    help = "Valid string formats are: Email, Url, Uuid, Ipv4, Ipv6, DateTime, Date, Time, Duration, Base64, Ulid, Cuid, Cuid2, or a custom regex string literal.";
                 ),
             }
         } else {
@@ -117,12 +159,18 @@ pub struct RodStringContent {
     starts_with: Option<LitStr>,
     ends_with: Option<LitStr>,
     includes: Option<LitStr>,
+    /// `trim = true`: whitespace-trim the field during sanitize()/parse().
+    trim: bool,
     custom_errors: [Option<LitStr>; STRING_VALIDATION_FIELDS], // length, format, starts_with, ends_with, includes
 }
 
 impl RodStringContent {
     pub(crate) fn length(&self) -> Option<&LengthOrSize> {
         self.length.as_ref()
+    }
+    /// Whether `trim = true` was requested.
+    pub(crate) fn trim(&self) -> bool {
+        self.trim
     }
     #[cfg(feature = "regex")]
     pub(crate) fn format(&self) -> Option<&StringFormat> {
@@ -138,7 +186,7 @@ impl RodStringContent {
         self.includes.as_ref()
     }
 
-    pub(crate) fn get_validations(&self, field_name: &proc_macro2::Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    pub(crate) fn get_validations(&self, field_name: &proc_macro2::Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, _delegate: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let path = field_name.to_string();
         let length_opt = self.length.as_ref().map(|length| {
             if let Some(msg) = self.custom_errors[0].as_ref() {
@@ -157,6 +205,13 @@ impl RodStringContent {
                 StringFormat::Ipv4 => String::from(regex_literals::IPV4_REGEX),
                 StringFormat::Ipv6 => String::from(regex_literals::IPV6_REGEX),
                 StringFormat::DateTime => String::from(regex_literals::DATETIME_REGEX),
+                StringFormat::Date => String::from(regex_literals::DATE_REGEX),
+                StringFormat::Time => String::from(regex_literals::TIME_REGEX),
+                StringFormat::Duration => String::from(regex_literals::DURATION_REGEX),
+                StringFormat::Base64 => String::from(regex_literals::BASE64_REGEX),
+                StringFormat::Ulid => String::from(regex_literals::ULID_REGEX),
+                StringFormat::Cuid => String::from(regex_literals::CUID_REGEX),
+                StringFormat::Cuid2 => String::from(regex_literals::CUID2_REGEX),
             };
             let ret = if let Some(msg) = self.custom_errors[1].as_ref() {
                 user_defined_error(wrap_return, msg)
@@ -217,7 +272,7 @@ impl RodStringContent {
             #includes_opt
         }
     }
-    pub(crate) fn get_validations_with_custom_error(&self, field_name: &proc_macro2::Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
+    pub(crate) fn get_validations_with_custom_error(&self, field_name: &proc_macro2::Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, _delegate: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
         let length_opt = self.length.as_ref().map(|length| {
             if let Some(msg) = self.custom_errors[0].as_ref() {
                 length.validate_string_with_custom_error(field_name, wrap_return, msg)
@@ -235,6 +290,13 @@ impl RodStringContent {
                 StringFormat::Ipv4 => String::from(regex_literals::IPV4_REGEX),
                 StringFormat::Ipv6 => String::from(regex_literals::IPV6_REGEX),
                 StringFormat::DateTime => String::from(regex_literals::DATETIME_REGEX),
+                StringFormat::Date => String::from(regex_literals::DATE_REGEX),
+                StringFormat::Time => String::from(regex_literals::TIME_REGEX),
+                StringFormat::Duration => String::from(regex_literals::DURATION_REGEX),
+                StringFormat::Base64 => String::from(regex_literals::BASE64_REGEX),
+                StringFormat::Ulid => String::from(regex_literals::ULID_REGEX),
+                StringFormat::Cuid => String::from(regex_literals::CUID_REGEX),
+                StringFormat::Cuid2 => String::from(regex_literals::CUID2_REGEX),
             };
             let ret = if let Some(msg) = self.custom_errors[1].as_ref() {
                 user_defined_error(wrap_return, msg)
@@ -308,6 +370,7 @@ impl Parse for RodStringContent {
                 starts_with: None,
                 ends_with: None,
                 includes: None,
+                trim: false,
                 custom_errors: [None, None, None, None, None],
             }),
         };
@@ -318,6 +381,7 @@ impl Parse for RodStringContent {
         let mut starts_with = None;
         let mut ends_with = None;
         let mut includes = None;
+        let mut trim = false;
         let mut message: Option<LitStr> = None;
         let mut custom_errors: [Option<LitStr>; STRING_VALIDATION_FIELDS] = [None, None, None, None, None];
 
@@ -367,6 +431,20 @@ impl Parse for RodStringContent {
                     if let Some(msg) = message.take() {
                         custom_errors[3] = Some(msg);
                     }
+                } else if ident == "trim" {
+                    // Boolean flag: bare `trim` means true; also allow
+                    // `trim = true` (possibly via `:` by mistake of habit).
+                    if inner.peek(syn::Token![=]) {
+                        let _: syn::Token![=] = inner.parse()?;
+                        let flag: syn::LitBool = inner.parse()?;
+                        trim = flag.value;
+                    } else if inner.peek(syn::Token![:]) {
+                        let _: syn::Token![:] = inner.parse()?;
+                        let flag: syn::LitBool = inner.parse()?;
+                        trim = flag.value;
+                    } else {
+                        trim = true;
+                    }
                 } else {
                     abort!(
                         ident.span(),
@@ -396,6 +474,7 @@ impl Parse for RodStringContent {
             starts_with,
             ends_with,
             includes,
+            trim,
             custom_errors,
         };
 
@@ -405,6 +484,7 @@ impl Parse for RodStringContent {
             starts_with,
             ends_with,
             includes,
+            trim,
             custom_errors,
         };
 

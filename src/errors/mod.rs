@@ -22,9 +22,39 @@ macro_rules! rod_validation_types {
             )*
             CheckFailed(&'static str),
             UserDefined(String),
+            /// An error raised while validating a nested field that itself
+            /// implements `RodValidate`. Keeps the field name so the full
+            /// path (`outer.inner`) can be reconstructed; nestings produce
+            /// nested `Nested` layers.
+            Nested(&'static str, Box<RodValidateError>),
         }
 
-        impl Error for RodValidateError {}
+        impl RodValidateError {
+            /// The path of field names leading to this error, outermost
+            /// first (e.g. `["person", "address", "city"]`). Empty for
+            /// top-level errors.
+            pub fn path(&self) -> Vec<&str> {
+                match self {
+                    RodValidateError::Nested(field, inner) => {
+                        let mut path: Vec<&str> = vec![field];
+                        path.extend(inner.path());
+                        path
+                    }
+                    _ => Vec::new(),
+                }
+            }
+
+            /// The top-level field this error belongs to: the first segment
+            /// of [`path`](Self::path). `None` for errors raised at the root
+            /// of the validated type (per-value checks, container-shape
+            /// errors, `UserDefined` messages without field context).
+            pub fn top_level_field(&self) -> Option<&'static str> {
+                match self {
+                    RodValidateError::Nested(field, _) => Some(field),
+                    _ => None,
+                }
+            }
+        }
 
         impl Display for RodValidateError {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -37,9 +67,21 @@ macro_rules! rod_validation_types {
                         write!(f, "Custom validation check failed for `{}`", path),
                     RodValidateError::UserDefined(msg) => 
                         write!(f, "{}", msg),
+                    RodValidateError::Nested(_field, _inner) => {
+                        // The nesting chain renders as a dotted path prefix.
+                        let mut path: Vec<&str> = Vec::new();
+                        let mut current = self;
+                        while let RodValidateError::Nested(field, next) = current {
+                            path.push(field);
+                            current = next;
+                        }
+                        write!(f, "{}: {}", path.join("."), current)
+                    }
                 }
             }
         }
+
+        impl Error for RodValidateError {}
 
         /// A list of validation errors.
         /// This is used in the `validate_all` method of the `RodValidate` trait
@@ -72,6 +114,50 @@ macro_rules! rod_validation_types {
             /// Returns an iterator over the errors without consuming the list.
             pub fn iter(&self) -> std::slice::Iter<'_, RodValidateError> {
                 self.0.iter()
+            }
+            /// Borrow every error as a slice (iteration order preserved).
+            pub fn as_slice(&self) -> &[RodValidateError] {
+                &self.0
+            }
+
+            /// Each error as `(dotted path, rendered message)`, in insertion
+            /// order. Root-level errors (no path) get an empty path string.
+            pub fn flatten(&self) -> Vec<(String, String)> {
+                self.0
+                    .iter()
+                    .map(|e| (e.path().join("."), e.to_string()))
+                    .collect()
+            }
+
+            /// Errors grouped by top-level field: field name -> messages,
+            /// sorted by field name. The shape UI layers map straight onto
+            /// per-field error displays. Root-level errors are omitted;
+            /// collect them with [`root_errors`](Self::root_errors).
+            pub fn field_errors(&self) -> std::collections::BTreeMap<String, Vec<String>> {
+                let mut map = std::collections::BTreeMap::new();
+                for e in &self.0 {
+                    if let Some(field) = e.top_level_field() {
+                        map.entry(field.to_string())
+                            .or_insert_with(Vec::new)
+                            .push(e.to_string());
+                    }
+                }
+                map
+            }
+
+            /// Errors raised at the root of the validated type — they carry
+            /// no field path (custom per-value checks, container-shape
+            /// errors, `UserDefined` messages without field context).
+            pub fn root_errors(&self) -> Vec<&RodValidateError> {
+                self.0.iter().filter(|e| e.path().is_empty()).collect()
+            }
+
+            /// All errors whose top-level field is `name`, insertion order.
+            pub fn field(&self, name: &str) -> Vec<&RodValidateError> {
+                self.0
+                    .iter()
+                    .filter(|e| e.top_level_field() == Some(name))
+                    .collect()
             }
         }
 
@@ -120,4 +206,7 @@ rod_validation_types! {
     option, Option, OptionValidation,
     float, Float, FloatValidation,
     iterable, Iterable, IterableValidation,
+    datetime, Datetime, DatetimeValidation,
+    uuid, Uuid, UuidValidation,
+    url, Url, UrlValidation,
 }

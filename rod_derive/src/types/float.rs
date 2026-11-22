@@ -1,5 +1,5 @@
 use proc_macro_error::abort;
-use syn::{parse::Parse, Ident, LitStr};
+use syn::{parse::Parse, Ident, Lit, LitStr};
 use quote::{quote, ToTokens};
 
 
@@ -74,7 +74,10 @@ pub struct RodFloatContent {
     size: Option<LengthOrSize>,
     sign: Option<NumberSign>,
     r#type: Option<FloatType>,
-    custom_errors: [Option<LitStr>; 3], // size, sign, type
+    /// Multiple-of check. Accepts float literals; integer literals are
+    /// promoted (`step: 2` validates against `2.0`).
+    step: Option<Lit>,
+    custom_errors: [Option<LitStr>; 4], // size, sign, type, step
 }
 
 impl RodFloatContent {
@@ -84,8 +87,37 @@ impl RodFloatContent {
     pub(crate) fn sign(&self) -> Option<&NumberSign> {
         self.sign.as_ref()
     }
+    /// The raw step literal, for schema generation (`multipleOf`).
+    pub(crate) fn step(&self) -> Option<&Lit> {
+        self.step.as_ref()
+    }
 
-    pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    /// The step value rendered as a float literal token (integers gain
+    /// a `.0`) suitable for use in generated `f64` expressions, plus the
+    /// user-written text for error messages.
+    fn step_litteral(&self) -> Option<(proc_macro2::TokenStream, proc_macro2::TokenStream)> {
+        let lit = self.step.as_ref()?;
+        match lit {
+            Lit::Float(_) | Lit::Int(_) => {
+                let text = lit.to_token_stream().to_string();
+                let float_text = if text.contains('.') || text.contains('e') || text.contains('E') {
+                    text.clone()
+                } else {
+                    format!("{}.0", text)
+                };
+                let numeric: proc_macro2::TokenStream = float_text.parse().ok()?;
+                let as_written: proc_macro2::TokenStream = text.parse().ok()?;
+                Some((numeric, as_written))
+            }
+            _ => abort!(
+                lit.span(),
+                "Expected a number for the `step` attribute";
+                help = "Example: `step: 0.5`"
+            ),
+        }
+    }
+
+    pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, _delegate: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let path = field_name.to_string();
         let size_opt = self.size.as_ref().map(|size| {
             if let Some(msg) = self.custom_errors[0].as_ref() {
@@ -125,8 +157,12 @@ impl RodFloatContent {
             let ret = if let Some(msg) = self.custom_errors[2].as_ref() {
                 user_defined_error(wrap_return, msg)
             } else {
+                // `stringify!` keeps the dtype as a `&'static str` in the
+                // generated code; interpolating the token verbatim would
+                // emit the bare ident (`Finite`), which does not resolve in
+                // the consumer's scope.
                 wrap_return(quote! {
-                    RodValidateError::Float(FloatValidation::Type(#path, #field_name.clone().into(), #r#type))
+                    RodValidateError::Float(FloatValidation::Type(#path, #field_name.clone().into(), stringify!(#r#type)))
                 })
             };
             quote! {
@@ -135,14 +171,32 @@ impl RodFloatContent {
                 }
             }
         });
+        let step_opt = self.step_litteral().map(|(step_numeric, step_as_written)| {
+            let ret = if let Some(msg) = self.custom_errors[3].as_ref() {
+                user_defined_error(wrap_return, msg)
+            } else {
+                wrap_return(quote! {
+                    RodValidateError::Float(FloatValidation::Step(#path, #field_name.clone().into(), #step_as_written.to_string()))
+                })
+            };
+            // Direct modulo, like every multipleOf implementation: the
+            // user's step precision IS the contract. NaN fails the check
+            // (NaN % step is NaN), which is the intended semantics.
+            quote! {
+                if (#field_name % #step_numeric) != 0.0 {
+                    #ret;
+                }
+            }
+        });
         quote! {
             #size_opt
             #sign_opt
             #type_opt
+            #step_opt
         }
     }
 
-    pub(crate) fn get_validations_with_custom_error(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
+    pub(crate) fn get_validations_with_custom_error(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, _delegate: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
         let size_opt = self.size.as_ref().map(|size| {
             if let Some(msg) = self.custom_errors[0].as_ref() {
                 size.validate_float_with_custom_error(field_name, wrap_return, msg)
@@ -204,14 +258,16 @@ impl Parse for RodFloatContent {
                 size: None,
                 sign: None,
                 r#type: None,
-                custom_errors: [None, None, None],
+                step: None,
+                custom_errors: [None, None, None, None],
             })
         };
         let mut size = None;
         let mut sign = None;
         let mut r#type = None;
+        let mut step: Option<Lit> = None;
         let mut message: Option<LitStr> = None;
-        let mut custom_errors: [Option<LitStr>; FLOAT_VALIDATION_FIELDS] = [None, None, None];
+        let mut custom_errors: [Option<LitStr>; FLOAT_VALIDATION_FIELDS] = [None, None, None, None];
         while !inner.is_empty() {
             let lookahead = inner.lookahead1();
             if lookahead.peek(syn::Ident) {
@@ -237,6 +293,13 @@ impl Parse for RodFloatContent {
                     if let Some(msg) = message.take() {
                         custom_errors[2] = Some(msg);
                     }
+                } else if ident == "step" {
+                    check_already_used_attr!(step, ident.span());
+                    inner.parse::<syn::Token![:]>()?;
+                    step = Some(inner.parse()?);
+                    if let Some(msg) = message.take() {
+                        custom_errors[3] = Some(msg);
+                    }
                 } else {
                     abort!(
                         ident.span(),
@@ -259,6 +322,7 @@ impl Parse for RodFloatContent {
             size,
             sign,
             r#type,
+            step,
             custom_errors,
         })
     }

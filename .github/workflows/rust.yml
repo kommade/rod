@@ -53,8 +53,8 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Run cargo tests (all targets)
-        run: cargo test --all --all-targets
+      - name: Run cargo tests (all targets, all features)
+        run: cargo test --all --all-features --all-targets
 
   publish:
     name: Publish rod_derive and rod to crates.io

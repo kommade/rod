@@ -10,11 +10,11 @@ fn test_enum_tuple() {
         Second,
         Third(
             #[rod(Literal {
-                value: true,
+                is: true,
             })]
             bool,
             #[rod(Literal {
-                value: 1,
+                is: 1,
             })]
             i32,
         )
@@ -41,7 +41,7 @@ fn test_enum_embedded_struct() {
         First(TestStruct),
         Second(
             #[rod(Literal {
-                value: true,
+                is: true,
             })]
             bool,
             #[rod(f64 {
@@ -52,7 +52,7 @@ fn test_enum_embedded_struct() {
         ),
         Third {
             #[rod(Literal {
-                value: "12345",
+                is: "12345",
             })]
             field: &'static str,
         }

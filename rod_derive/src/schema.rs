@@ -9,7 +9,7 @@ use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{Data, DataEnum, DataStruct, DeriveInput, ExprRange, Fields, LitInt, RangeLimits};
 
-use crate::{parse_field_rod, RodAttrContent};
+use crate::{parse_field_description, parse_field_rod, RodAttrContent};
 use crate::types::{LengthOrSize, NumberSign};
 
 /// A tiny compile-time JSON representation.
@@ -221,7 +221,24 @@ fn literal_to_json(lit: &syn::PatLit) -> (String, &'static str) {
     (trimmed.to_string(), "string")
 }
 
-fn literal_schema(lit: &syn::PatLit) -> Option<Json> {
+fn literal_schema(content: &crate::types::RodLiteralContent) -> Option<Json> {
+    // `any: [...]` form -> JSON Schema `enum` (typed per literal kind).
+    if !content.any().is_empty() {
+        let values: Vec<Json> = content
+            .any()
+            .iter()
+            .map(|lit| {
+                let (value, ty) = literal_to_json(lit);
+                match ty {
+                    "boolean" => Json::Bool(value == "true"),
+                    "number" => Json::Num(value),
+                    _ => Json::Str(value),
+                }
+            })
+            .collect();
+        return Some(Json::obj(vec![("enum", Json::Arr(values))]));
+    }
+    let lit = content.value()?;
     let (value, ty) = literal_to_json(lit);
     // Emit `const` with the proper JSON type, not as a string.
     let const_json = match ty {
@@ -269,6 +286,13 @@ fn string_schema(content: &crate::types::RodStringContent) -> Option<Json> {
             StringFormat::Ipv4 => fields.push(("format", Json::s("ipv4"))),
             StringFormat::Ipv6 => fields.push(("format", Json::s("ipv6"))),
             StringFormat::DateTime => fields.push(("format", Json::s("date-time"))),
+            StringFormat::Date => fields.push(("format", Json::s("date"))),
+            StringFormat::Time => fields.push(("format", Json::s("time"))),
+            StringFormat::Duration => fields.push(("format", Json::s("duration"))),
+            StringFormat::Base64 => fields.push(("format", Json::s("base64"))),
+            StringFormat::Ulid => fields.push(("format", Json::s("ulid"))),
+            StringFormat::Cuid => fields.push(("format", Json::s("cuid"))),
+            StringFormat::Cuid2 => fields.push(("format", Json::s("cuid2"))),
         }
     }
     if let Some(starts) = content.starts_with() {
@@ -358,11 +382,22 @@ fn float_schema(content: &crate::types::RodFloatContent) -> Option<Json> {
     if let Some(sign) = content.sign() {
         fields.extend(sign_schema(sign));
     }
+    if let Some(step) = content.step() {
+        let n = match step {
+            syn::Lit::Float(l) => l.to_token_stream().to_string().parse::<f64>().ok(),
+            syn::Lit::Int(l) => l.base10_parse::<f64>().ok(),
+            _ => None,
+        };
+        if let Some(n) = n {
+            fields.push(("multipleOf", Json::n_f(n)));
+        }
+    }
     Some(Json::obj(fields))
 }
 
 fn iterable_schema(content: &crate::types::RodIterableContent) -> Option<Json> {
     let mut fields = vec![("type", Json::s("array"))];
+    // `item: Skip` leaves items unconstrained (Skip schemas to a blank).
     let item_schema = content_schema(&content.item.content).unwrap_or(Json::Bool(true));
     fields.push(("items", item_schema));
     if let Some(length) = content.length() {
@@ -388,6 +423,48 @@ fn iterable_schema(content: &crate::types::RodIterableContent) -> Option<Json> {
             }
         }
     }
+    if content.distinct {
+        fields.push(("uniqueItems", Json::Bool(true)));
+    }
+    Some(Json::obj(fields))
+}
+
+/// Schema for a `Map` field: a JSON object whose properties (the values)
+/// are constrained by the `value` rule. The `length` becomes the property
+/// count bounds. Key rules are runtime-only: JSON Schema cannot express
+/// per-key constraints beyond string patterns, so they are not exported.
+fn map_schema(content: &crate::types::RodMapContent) -> Option<Json> {
+    let mut fields = vec![("type", Json::s("object"))];
+    // `value: Skip` leaves values unconstrained (blank schema).
+    let value_schema = content
+        .value
+        .as_ref()
+        .and_then(|v| content_schema(&v.content))
+        .unwrap_or(Json::Bool(true));
+    fields.push(("additionalProperties", value_schema));
+    if let Some(length) = content.length() {
+        match length {
+            LengthOrSize::Exact(exact) => {
+                if let Ok(n) = exact.base10_parse::<i128>() {
+                    fields.push(("minProperties", Json::n_i(n)));
+                    fields.push(("maxProperties", Json::n_i(n)));
+                }
+            }
+            LengthOrSize::Range(range) => {
+                let (start, end, inclusive) = range_bounds_i128(range);
+                if let Some(min) = start {
+                    fields.push(("minProperties", Json::n_i(min)));
+                }
+                if let Some(max) = end {
+                    if inclusive {
+                        fields.push(("maxProperties", Json::n_i(max)));
+                    } else {
+                        fields.push(("maxProperties", Json::n_i(max - 1)));
+                    }
+                }
+            }
+        }
+    }
     Some(Json::obj(fields))
 }
 
@@ -403,12 +480,41 @@ fn tuple_schema(content: &crate::types::RodTupleContent) -> Option<Json> {
     ]))
 }
 
+/// A string schema with `format` plus rule-specific `x-rod-*` extensions.
+fn string_schema_with_exts(format: &'static str, exts: Vec<(&'static str, String)>) -> Json {
+    let mut pairs: Vec<(&str, Json)> = vec![("type", Json::s("string")), ("format", Json::s(format))];
+    for (key, value) in exts {
+        pairs.push((key, Json::s(value)));
+    }
+    Json::obj(pairs)
+}
+
+/// Typed datetime rules: `format` reflects the wire form (`date-time` for
+/// zoned, the x-rod extension for zoneless), bounds travel as `x-rod-min`/
+/// `x-rod-max` (JSON Schema has no ordering keywords for date strings).
+fn typed_datetime_schema(
+    format: Option<&'static str>,
+    naive_marker: Option<&'static str>,
+    exts: Vec<(&'static str, String)>,
+) -> Json {
+    let mut pairs: Vec<(&str, Json)> = vec![("type", Json::s("string"))];
+    match (format, naive_marker) {
+        (Some(format), _) => pairs.push(("format", Json::s(format))),
+        (None, Some(marker)) => pairs.push(("x-rod-format", Json::s(marker))),
+        (None, None) => {}
+    }
+    for (key, value) in exts {
+        pairs.push((key, Json::s(value)));
+    }
+    Json::obj(pairs)
+}
+
 fn content_schema(content: &RodAttrContent) -> Option<Json> {
     match content {
         RodAttrContent::Skip(_) => None,
         RodAttrContent::Boolean(_) => Some(Json::obj(vec![("type", Json::s("boolean"))])),
         RodAttrContent::Custom(_) => Some(Json::obj(vec![("type", Json::s("object"))])),
-        RodAttrContent::Literal(l) => literal_schema(l.value()),
+        RodAttrContent::Literal(l) => literal_schema(l),
         RodAttrContent::String(s) => string_schema(s),
         RodAttrContent::Integer(i) => integer_schema(i),
         RodAttrContent::Float(f) => float_schema(f),
@@ -421,25 +527,144 @@ fn content_schema(content: &RodAttrContent) -> Option<Json> {
             ),
         },
         RodAttrContent::Iterable(i) => iterable_schema(i),
+        RodAttrContent::Map(m) => map_schema(m),
         RodAttrContent::Tuple(t) => tuple_schema(t),
+        RodAttrContent::Date(c) => Some(typed_datetime_schema(
+            Some("date"),
+            None,
+            c.schema_exts(),
+        )),
+        RodAttrContent::Time(c) => Some(typed_datetime_schema(
+            Some("time"),
+            None,
+            c.schema_exts(),
+        )),
+        RodAttrContent::NaiveDateTime(c) => Some(typed_datetime_schema(
+            None,
+            Some("naive-date-time"),
+            c.schema_exts(),
+        )),
+        RodAttrContent::DateTime(c) => Some(typed_datetime_schema(
+            Some("date-time"),
+            None,
+            c.schema_exts(),
+        )),
+        RodAttrContent::UuidRule(c) => {
+            let mut pairs: Vec<(&str, Json)> =
+                vec![("type", Json::s("string")), ("format", Json::s("uuid"))];
+            if let Some(version) = &c.version {
+                if let Ok(n) = version.base10_parse::<i128>() {
+                    pairs.push(("x-rod-uuid-version", Json::n_i(n)));
+                }
+            }
+            Some(Json::obj(pairs))
+        }
+        RodAttrContent::UrlRule(c) => {
+            Some(string_schema_with_exts("uri", c.schema_exts()))
+        }
     }
+}
+
+/// Schema hints for unattributed third-party datetime fields (the derive's
+/// `chrono` feature, forwarded by rod_validation's `chrono` feature). The
+/// types validate trivially via blanket impls; the schema only annotates the
+/// wire format chrono's serde produces.
+#[cfg(feature = "chrono")]
+fn third_party_datetime_schema(ty: &syn::Type) -> Option<Json> {
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    let format = match path.path.segments.last()?.ident.to_string().as_str() {
+        "NaiveDate" => Some("date"),
+        "NaiveTime" => Some("time"),
+        // Zoned datetimes serialize as RFC 3339, so the standard keyword is
+        // exactly right.
+        "DateTime" => Some("date-time"),
+        // NaiveDateTime is zoneless and therefore NOT valid RFC 3339 - a
+        // strict `date-time` validator would reject the real data. The
+        // x-rod extension keeps the hint without overpromising.
+        "NaiveDateTime" => {
+            return Some(Json::obj(vec![
+                ("type", Json::s("string")),
+                ("x-rod-format", Json::s("naive-date-time")),
+            ]));
+        }
+        // Bare `Duration` is ambiguous (chrono's TimeDelta vs
+        // std::time::Duration, which serializes as {secs, nanos}), so it is
+        // deliberately left unannotated.
+        _ => None,
+    };
+    format.map(|format| {
+        Json::obj(vec![("type", Json::s("string")), ("format", Json::s(format))])
+    })
+}
+
+/// Schema hints for unattributed third-party typed fields. The chrono part
+/// lives in [`third_party_datetime_schema`]; this covers `uuid` and `url`.
+/// All of these validate trivially via blanket impls; the schema only
+/// annotates the wire format the type's serde produces.
+#[cfg(any(feature = "uuid", feature = "url"))]
+fn third_party_id_schema(ty: &syn::Type) -> Option<Json> {
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    let format = match path.path.segments.last()?.ident.to_string().as_str() {
+        #[cfg(feature = "uuid")]
+        "Uuid" => Some("uuid"),
+        #[cfg(feature = "url")]
+        "Url" => Some("uri"),
+        _ => None,
+    };
+    format.map(|format| {
+        Json::obj(vec![("type", Json::s("string")), ("format", Json::s(format))])
+    })
 }
 
 /// Schema for a field, plus whether the field is required. `None` means the
 /// field is skipped and should not appear in the schema at all.
 fn field_schema(field: &syn::Field) -> Option<(Option<Json>, bool)> {
     let (_, rod_attr) = parse_field_rod(field);
+    let description = parse_field_description(field);
+    if rod_attr.is_none() && matches!(&field.ty, syn::Type::BareFn(_)) {
+        // Callback fields (form handlers etc.) carry behavior, not data:
+        // they are excluded from the schema exactly like `Skip` fields.
+        return None;
+    }
+    let attach = |schema: Option<Json>| -> Option<Json> {
+        match (schema, description.as_ref()) {
+            (Some(Json::Obj(mut pairs)), Some(desc)) => {
+                if !pairs.iter().any(|(k, _)| k == "description") {
+                    pairs.push(("description".to_string(), Json::Str(desc.value())));
+                }
+                Some(Json::Obj(pairs))
+            }
+            (schema, _) => schema,
+        }
+    };
     match &rod_attr {
         // Fields without a `rod` attribute must implement `RodValidate`
         // themselves; we cannot introspect their rules, so emit a generic object.
-        None => Some((Some(Json::obj(vec![("type", Json::s("object"))])), true)),
+        None => {
+            #[cfg(feature = "chrono")]
+            if let Some(schema) = third_party_datetime_schema(&field.ty) {
+                return Some((attach(Some(schema)), true));
+            }
+            #[cfg(any(feature = "uuid", feature = "url"))]
+            if let Some(schema) = third_party_id_schema(&field.ty) {
+                return Some((attach(Some(schema)), true));
+            }
+            Some((
+                attach(Some(Json::obj(vec![("type", Json::s("object"))]))),
+                true,
+            ))
+        }
         Some(attr) => {
             let schema = content_schema(&attr.content);
             let required = !matches!(
                 &attr.content,
                 RodAttrContent::Skip(_) | RodAttrContent::Option(_)
             );
-            Some((schema, required))
+            Some((attach(schema), required))
         }
     }
 }
@@ -469,12 +694,27 @@ fn object_from_fields<'a, I: IntoIterator<Item = &'a syn::Field>>(fields: I) -> 
     Json::obj(pairs)
 }
 
+/// Schema for an unattributed custom-type field (nested `RodValidate`).
+fn inner_field_schema(field: &syn::Field) -> Option<Json> {
+    match field_schema(field) {
+        Some((schema, _required)) => schema,
+        None => Some(Json::obj(vec![("type", Json::s("object"))])),
+    }
+}
+
 fn struct_schema(data: &DataStruct) -> Json {
     match &data.fields {
         Fields::Named(named) => object_from_fields(&named.named),
-        // The validation derive only supports named structs; emit a generic
-        // object schema for anything else.
-        _ => Json::obj(vec![("type", Json::s("object"))]),
+        // Newtype structs validate their single inner field; the schema is
+        // the inner field's rule (same idea as Rust's transparent types).
+        Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => inner_field_schema(
+            unnamed.unnamed.first().unwrap(),
+        )
+        .unwrap_or(Json::obj(vec![("type", Json::s("object"))])),
+        // Multi-field tuple structs are rejected at codegen; unit structs
+        // accept anything.
+        Fields::Unnamed(_) => Json::obj(vec![("type", Json::s("object"))]),
+        Fields::Unit => Json::Bool(true),
     }
 }
 

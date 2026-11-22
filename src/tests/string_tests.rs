@@ -28,7 +28,7 @@ fn test_string_literals() {
     #[derive(RodValidate)]
     struct Test {
         #[rod(Literal {
-            value: "12345",
+            is: "12345",
         })]
         field: String,
     }
@@ -51,7 +51,7 @@ fn test_string_length_enum() {
         Second,
         Third(
             #[rod(Literal {
-                value: true,
+                is: true,
             })]
             bool,
         )

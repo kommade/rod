@@ -43,6 +43,27 @@ mod group_tests;
 /// Tests for `async_check` fields and `AsyncValidator`
 mod async_tests;
 
+/// Tests for newtype structs, nested error paths and multi-value literals
+mod newtype_tests;
+
+/// Tests for parse/sanitize transforms (RodParse)
+mod parse_tests;
+
+/// Tests for distinct iterables and check_all multi-issue closures
+mod phase4_tests;
+
+/// Tests for std-container impls (Box/Rc/Arc/Vec/Option), recursive types
+/// and callback fields (fn pointers, held futures)
+mod phase5_tests;
+
+/// Tests for sets/VecDeque via `Iterable` and key-value maps via `Map`
+/// (keys, values, entry-count length, per-entry paths, groups, async)
+mod collection_tests;
+
+/// Tests for the untrusted-input adapters (serde)
+#[cfg(feature = "serde")]
+mod adapter_tests;
+
 /// Shared helpers (current-thread executor)
 mod support;
 
@@ -55,3 +76,25 @@ mod regex_tests;
 mod json_schema_tests;
 
 mod combinator_tests;
+
+/// Error report helpers, field descriptions, float step and ftype
+mod error_report_tests;
+
+/// Path-aware multi-issue checks (`check_all_paths`/`async_check_all_paths`)
+mod check_paths_tests;
+
+/// Typed chrono datetimes (blanket impls, schema hints, serde bridge)
+#[cfg(feature = "chrono")]
+mod chrono_tests;
+
+/// Typed uuid/url (feature-gated) and std NonZero* validation
+mod typed_id_tests;
+
+/// Typed attribute rules: datetime bounds, uuid version, url checks
+#[cfg(any(feature = "chrono", feature = "uuid", feature = "url"))]
+mod typed_rule_tests;
+
+/// Async validation against a real Tokio runtime (timers, spawned tasks,
+/// concurrent `join!`) — the plain async tests only use instantly-ready
+/// futures with the no-op-waker executor.
+mod tokio_tests;

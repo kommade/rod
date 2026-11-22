@@ -1,23 +1,23 @@
 use proc_macro_error::abort;
 use syn::{parse::Parse, Ident, LitStr};
-use quote::{format_ident, quote};
+use quote::quote;
 
 use crate::{RodAttr, RodAttrContent};
 
 use super::{optional_braced, user_defined_error};
 
 macro_rules! rod_content_match {
-    ($content:expr, $field_access:expr, $wrap_return:expr, [ $( $variant:ident ),* ]) => {
+    ($content:expr, $field_access:expr, $wrap_return:expr, $delegate:expr, [ $( $variant:ident ),* ]) => {
         match $content {
             $(
-                RodAttrContent::$variant(content) => content.get_validations($field_access, $wrap_return),
+                RodAttrContent::$variant(content) => content.get_validations($field_access, $wrap_return, $delegate),
             )*
         }
     };
-    ($content:expr, $field_access:expr, $wrap_return:expr, $custom_error:expr, [ $( $variant:ident ),* ]) => {
+    ($content:expr, $field_access:expr, $wrap_return:expr, $delegate:expr, $custom_error:expr, [ $( $variant:ident ),* ]) => {
         match $content {
             $(
-                RodAttrContent::$variant(content) => content.get_validations_with_custom_error($field_access, $wrap_return, $custom_error),
+                RodAttrContent::$variant(content) => content.get_validations_with_custom_error($field_access, $wrap_return, $delegate, $custom_error),
             )*
         }
     };
@@ -56,6 +56,15 @@ macro_rules! rod_content_match {
 pub struct RodOptionContent {
     pub(crate) inner: Option<Box<RodAttr>>,
     custom_none_error: Option<LitStr>,
+    /// `default = expr`: during `sanitize()` an absent value becomes
+    /// `Some(expr)`, so validation then runs against the fallback.
+    default: Option<syn::Expr>,
+}
+
+impl RodOptionContent {
+    pub(crate) fn default(&self) -> Option<&syn::Expr> {
+        self.default.as_ref()
+    }
 }
 
 impl Parse for RodOptionContent {
@@ -64,20 +73,36 @@ impl Parse for RodOptionContent {
         let inner = match opt {
             Some(inner) => inner,
             None => {
-                return Ok(RodOptionContent { inner: None, custom_none_error: None });
+                return Ok(RodOptionContent { inner: None, custom_none_error: None, default: None });
             }
         };
         if inner.is_empty() {
-            Ok(RodOptionContent { inner: None, custom_none_error: None })
+            Ok(RodOptionContent { inner: None, custom_none_error: None, default: None })
         } else {
             let mut rod_attr: Option<RodAttr> = None;
             let mut message: Option<LitStr> = None;
+            let mut default: Option<syn::Expr> = None;
             while !inner.is_empty() {
                 let lookahead = inner.lookahead1();
                 if lookahead.peek(syn::Token![?]) {
                     let _q: syn::Token![?] = inner.parse()?;
                     let msg: LitStr = inner.parse()?;
                     message = Some(msg);
+                } else if lookahead.peek(syn::Ident) {
+                    let ident: syn::Ident = inner.fork().parse()?;
+                    if ident == "default" {
+                        let ident = inner.parse::<syn::Ident>()?;
+                        if default.is_some() {
+                            abort!(ident.span(), "The `default` attribute is used multiple times.");
+                        }
+                        inner.parse::<syn::Token![:]>()?;
+                        default = Some(inner.parse::<syn::Expr>()?);
+                    } else {
+                        if rod_attr.is_some() {
+                            abort!(inner.span(), "Option attribute can only contain a single inner validation");
+                        }
+                        rod_attr = Some(inner.parse()?);
+                    }
                 } else {
                     if rod_attr.is_some() {
                         abort!(inner.span(), "Option attribute can only contain a single inner validation");
@@ -89,13 +114,14 @@ impl Parse for RodOptionContent {
             Ok(RodOptionContent {
                 inner: rod_attr.map(Box::new),
                 custom_none_error: message,
+                default,
             })
         }
     }
 }
 
 impl RodOptionContent {
-    pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, delegate: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let path = field_name.to_string();
         if self.inner.is_none() {
             let ret = if let Some(msg) = self.custom_none_error.as_ref() {
@@ -116,9 +142,10 @@ impl RodOptionContent {
         } else {
             let inner_validation = rod_content_match!(
                 &self.inner.as_ref().unwrap().content,
-                &format_ident!("opt"),
+                field_name,
                 wrap_return,
-                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
+                delegate,
+                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map, Date, Time, DateTime, NaiveDateTime, UuidRule, UrlRule]
             );
             let ty = self.inner.as_ref().unwrap().ty.to_string();
             let ret = if let Some(msg) = self.custom_none_error.as_ref() {
@@ -130,7 +157,7 @@ impl RodOptionContent {
             };
             quote! {
                 match &#field_name {
-                    Some(opt) => {
+                    Some(#field_name) => {
                         #inner_validation
                     }
                     None => {
@@ -140,7 +167,7 @@ impl RodOptionContent {
             }
         }
     }
-    pub(crate) fn get_validations_with_custom_error(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
+    pub(crate) fn get_validations_with_custom_error(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, delegate: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
         if self.inner.is_none() {
             let ret = if let Some(msg) = self.custom_none_error.as_ref() {
                 user_defined_error(wrap_return, msg)
@@ -155,10 +182,11 @@ impl RodOptionContent {
         } else {
             let inner_validation = rod_content_match!(
                 &self.inner.as_ref().unwrap().content,
-                &format_ident!("opt"),
+                field_name,
                 wrap_return,
+                delegate,
                 custom_error,
-                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
+                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map, Date, Time, DateTime, NaiveDateTime, UuidRule, UrlRule]
             );
             let ret = if let Some(msg) = self.custom_none_error.as_ref() {
                 user_defined_error(wrap_return, msg)
@@ -167,7 +195,7 @@ impl RodOptionContent {
             };
             quote! {
                 match &#field_name {
-                    Some(opt) => {
+                    Some(#field_name) => {
                         #inner_validation
                     }
                     None => {
