@@ -537,6 +537,27 @@ fn third_party_datetime_schema(ty: &syn::Type) -> Option<Json> {
     })
 }
 
+/// Schema hints for unattributed third-party typed fields. The chrono part
+/// lives in [`third_party_datetime_schema`]; this covers `uuid` and `url`.
+/// All of these validate trivially via blanket impls; the schema only
+/// annotates the wire format the type's serde produces.
+#[cfg(any(feature = "uuid", feature = "url"))]
+fn third_party_id_schema(ty: &syn::Type) -> Option<Json> {
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    let format = match path.path.segments.last()?.ident.to_string().as_str() {
+        #[cfg(feature = "uuid")]
+        "Uuid" => Some("uuid"),
+        #[cfg(feature = "url")]
+        "Url" => Some("uri"),
+        _ => None,
+    };
+    format.map(|format| {
+        Json::obj(vec![("type", Json::s("string")), ("format", Json::s(format))])
+    })
+}
+
 /// Schema for a field, plus whether the field is required. `None` means the
 /// field is skipped and should not appear in the schema at all.
 fn field_schema(field: &syn::Field) -> Option<(Option<Json>, bool)> {
@@ -564,6 +585,10 @@ fn field_schema(field: &syn::Field) -> Option<(Option<Json>, bool)> {
         None => {
             #[cfg(feature = "chrono")]
             if let Some(schema) = third_party_datetime_schema(&field.ty) {
+                return Some((attach(Some(schema)), true));
+            }
+            #[cfg(any(feature = "uuid", feature = "url"))]
+            if let Some(schema) = third_party_id_schema(&field.ty) {
                 return Some((attach(Some(schema)), true));
             }
             Some((

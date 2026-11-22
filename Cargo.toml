@@ -18,12 +18,18 @@ serde_json = { version = "1.0", optional = true }
 # Typed datetime support (blanket RodValidate impls). serde is enabled on
 # chrono so the JSON adapters round-trip zoned/naive values out of the box.
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"], optional = true }
+uuid = { version = "1", features = ["serde", "v4"], optional = true }
+# `serde` (parsing) is needed to build Urls; `v4` gives the test fixture a
+# generator.
+url = { version = "2", optional = true }
 
 [features]
 default = []
 regex = ["dep:regex", "rod_derive/regex"]
 serde = ["dep:serde", "dep:serde_json"]
 chrono = ["dep:chrono", "rod_derive/chrono"]
+uuid = ["dep:uuid", "rod_derive/uuid"]
+url = ["dep:url", "rod_derive/url"]
 
 [dev-dependencies]
 regex = "1.11.2"

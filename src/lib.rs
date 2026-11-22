@@ -337,6 +337,117 @@ mod chrono_impls {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Blanket impls for uuid / url and the std NonZero* family (their features)
+//
+// Same "valid by construction" logic as the chrono impls above: a
+// `uuid::Uuid` and `url::Url` CANNOT exist in an invalid state, and a
+// `NonZero<iN>`/`NonZero<uN>` cannot be zero, so validation is trivial and
+// the impls exist purely so structs can hold these types next to validated
+// fields without a manual impl. Range/shape constraints belong at the wire
+// boundary (`check` closures) — they are not expressible per-runtime-value
+// in these types anyway.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "uuid")]
+mod uuid_impls {
+    use crate::RodValidate;
+
+    impl RodValidate for ::uuid::Uuid {
+        fn validate(&self) -> Result<(), crate::errors::RodValidateError> {
+            Ok(())
+        }
+        // Trial-decoded serde semantics keep validation consistent no
+        // matter the field position, so all four methods are trivial.
+        fn validate_all(&self) -> Result<(), crate::errors::RodValidateErrorList> {
+            Ok(())
+        }
+        fn validate_group(
+            &self,
+            _group: &str,
+        ) -> Result<(), crate::errors::RodValidateErrorList> {
+            Ok(())
+        }
+        fn validate_all_groups(
+            &self,
+        ) -> Result<(), crate::errors::RodValidateErrorList> {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(feature = "url")]
+mod url_impls {
+    use crate::RodValidate;
+
+    impl RodValidate for ::url::Url {
+        fn validate(&self) -> Result<(), crate::errors::RodValidateError> {
+            Ok(())
+        }
+        fn validate_all(&self) -> Result<(), crate::errors::RodValidateErrorList> {
+            Ok(())
+        }
+        fn validate_group(
+            &self,
+            _group: &str,
+        ) -> Result<(), crate::errors::RodValidateErrorList> {
+            Ok(())
+        }
+        fn validate_all_groups(
+            &self,
+        ) -> Result<(), crate::errors::RodValidateErrorList> {
+            Ok(())
+        }
+    }
+}
+
+// Non-zero integer impls. `NonZero` is a std type, so this part needs NO
+// cargo feature: zero-cost opt-in just by writing the field type.
+mod nonzero_impls {
+    use crate::RodValidate;
+
+    macro_rules! impl_rod_validate_for_nonzero {
+        ($($ty:ty),* $(,)?) => {
+            $(
+                impl RodValidate for $ty {
+                    fn validate(&self) -> Result<(), crate::errors::RodValidateError> {
+                        Ok(())
+                    }
+                    fn validate_all(&self) -> Result<(), crate::errors::RodValidateErrorList> {
+                        Ok(())
+                    }
+                    fn validate_group(
+                        &self,
+                        _group: &str,
+                    ) -> Result<(), crate::errors::RodValidateErrorList> {
+                        Ok(())
+                    }
+                    fn validate_all_groups(
+                        &self,
+                    ) -> Result<(), crate::errors::RodValidateErrorList> {
+                        Ok(())
+                    }
+                }
+            )*
+        };
+    }
+
+    impl_rod_validate_for_nonzero!(
+        ::core::num::NonZero<i8>,
+        ::core::num::NonZero<i16>,
+        ::core::num::NonZero<i32>,
+        ::core::num::NonZero<i64>,
+        ::core::num::NonZero<i128>,
+        ::core::num::NonZero<isize>,
+        ::core::num::NonZero<u8>,
+        ::core::num::NonZero<u16>,
+        ::core::num::NonZero<u32>,
+        ::core::num::NonZero<u64>,
+        ::core::num::NonZero<u128>,
+        ::core::num::NonZero<usize>,
+    );
+}
+
 // Root re-exports: generated code refers to `::rod_validation::...` absolute
 // paths so it does not depend on the deriving crate's imports.
 pub use combinators::{AsyncValidator, RodParse};

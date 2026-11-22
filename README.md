@@ -837,6 +837,23 @@ The JSON Schema export (serde feature) annotates these fields with their wire fo
 
 `NaiveDateTime` is zoneless and therefore **not** valid RFC 3339, so it deliberately does not claim the standard `date-time` keyword. Bare `Duration` fields are left unannotated (ambiguous with `std::time::Duration`). chrono's serde impls (enabled with the feature) make the JSON adapters parse datetimes directly, with stage-tagged errors: an invalid timestamp surfaces as `ParseError::Deserialize`, a broken rule as `ParseError::Validation`.
 
+### uuid, url and NonZero integers
+
+The same treatment extends to identity types, each gated by its own feature so no dependency is forced:
+
+```toml
+[dependencies]
+rod_validation = { version = "0.5.0", features = ["uuid", "url"] }
+uuid = { version = "1" }
+url = { version = "2" }
+```
+
+- `uuid` — `uuid::Uuid` validates trivially and exports as `{ "type": "string", "format": "uuid" }`; uuid's serde impls work through the JSON adapters.
+- `url` — `url::Url` validates trivially and exports as `{ "type": "string", "format": "uri" }` (a `Url` cannot exist unparseable, so there is nothing to check).
+- **`NonZero<iN>`/`NonZero<uN>` — always available, no feature**: the std family validates trivially (zero-ness is a type invariant). The container blanket impls (`Vec`, `Option`, `Box`, ...) compose with all of the above.
+
+Like the chrono types, these are *valid by construction* — the impls are structural. Range checks (e.g. "uuid must equal X", "lane count ≤ 5") belong in `check` closures or at the parse boundary with string formats.
+
 ## JSON Schema Export
 
 With the `serde` feature, the derive also generates a `ToJsonSchema` implementation describing every field's rules as draft 2020-12 JSON Schema — ready for OpenAPI docs, editor tooling, or frontend form generation:

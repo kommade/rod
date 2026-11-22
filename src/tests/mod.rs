@@ -87,6 +87,9 @@ mod check_paths_tests;
 #[cfg(feature = "chrono")]
 mod chrono_tests;
 
+/// Typed uuid/url (feature-gated) and std NonZero* validation
+mod typed_id_tests;
+
 /// Async validation against a real Tokio runtime (timers, spawned tasks,
 /// concurrent `join!`) — the plain async tests only use instantly-ready
 /// futures with the no-op-waker executor.
