@@ -73,6 +73,20 @@ fn test_schema_string_format_with_regex_feature() {
         }
         let schema = WithFormat::to_json_schema();
         assert_eq!(schema["properties"]["email"]["format"], "email");
+
+        #[derive(RodValidate)]
+        struct WithNewFormats {
+            #[rod(String { format: DateTime })]
+            occurred_at: String,
+            #[rod(String { format: Duration })]
+            ttl: String,
+            #[rod(String { format: Ulid })]
+            ref_id: String,
+        }
+        let schema = WithNewFormats::to_json_schema();
+        assert_eq!(schema["properties"]["occurred_at"]["format"], "date-time");
+        assert_eq!(schema["properties"]["ttl"]["format"], "duration");
+        assert_eq!(schema["properties"]["ref_id"]["format"], "ulid");
     }
 }
 

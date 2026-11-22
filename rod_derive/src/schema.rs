@@ -286,6 +286,13 @@ fn string_schema(content: &crate::types::RodStringContent) -> Option<Json> {
             StringFormat::Ipv4 => fields.push(("format", Json::s("ipv4"))),
             StringFormat::Ipv6 => fields.push(("format", Json::s("ipv6"))),
             StringFormat::DateTime => fields.push(("format", Json::s("date-time"))),
+            StringFormat::Date => fields.push(("format", Json::s("date"))),
+            StringFormat::Time => fields.push(("format", Json::s("time"))),
+            StringFormat::Duration => fields.push(("format", Json::s("duration"))),
+            StringFormat::Base64 => fields.push(("format", Json::s("base64"))),
+            StringFormat::Ulid => fields.push(("format", Json::s("ulid"))),
+            StringFormat::Cuid => fields.push(("format", Json::s("cuid"))),
+            StringFormat::Cuid2 => fields.push(("format", Json::s("cuid2"))),
         }
     }
     if let Some(starts) = content.starts_with() {

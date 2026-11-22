@@ -133,8 +133,17 @@ Available string formats (with `regex` feature):
 - `Uuid` - UUID validation
 - `Ipv4` - IPv4 address validation
 - `Ipv6` - IPv6 address validation
-- `DateTime` - DateTime validation
+- `DateTime` - Full timestamp (`YYYY-MM-DDTHH:MM:SS[.fff]` with offset or `Z`)
+- `Date` - Calendar date only (`YYYY-MM-DD`, months 01-12, days 01-31)
+- `Time` - Time of day (`HH:MM`, optional `:SS(.fff)` and `Z`/`±HH:MM` zone)
+- `Duration` - ISO 8601 duration (`P3Y6M4DT12H30M5S`, `PT1H`, `P1D`; bare `P`/`PT` rejected)
+- `Base64` - RFC 4648 with relaxed padding (`dGVzdA==` or `dGVzdA`)
+- `Ulid` - 26 characters of Crockford base32 (either case)
+- `Cuid` - cuid v1 shape (`c` + 8+ non-space/`-` characters)
+- `Cuid2` - 24+ alphanumeric characters
 - A string literal, e.g. `format: r"^[A-Z]{3}$"` - Custom regex pattern
+
+Each maps to a JSON Schema `format` (`date`, `time`, `duration`, `base64`, `ulid`, `cuid`, `cuid2`, ...) alongside the existing `email`/`uri`/`uuid`/`ipv4`/`ipv6`/`date-time`.
 
 ### Integer Validation
 
