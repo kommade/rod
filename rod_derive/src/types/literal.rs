@@ -12,7 +12,7 @@ use super::{optional_braced, user_defined_error};
 /// - `value`: A required attribute that specifies the expected literal value of the field.
 /// # Usage
 /// ```
-/// use rod::prelude::*;
+/// use rod_validation::prelude::*;
 /// 
 /// #[derive(RodValidate)]
 /// struct MyEntity {

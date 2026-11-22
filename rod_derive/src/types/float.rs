@@ -53,7 +53,7 @@ impl ToTokens for FloatType {
 /// - `ftype`: An optional attribute that specifies the type of the float. Valid values are: `NaN`, `Finite`, `Infinite`, `Normal`, `Subnormal`.
 /// # Usage
 /// ```
-/// use rod::prelude::*;
+/// use rod_validation::prelude::*;
 /// 
 /// #[derive(RodValidate)]
 /// struct MyEntity {

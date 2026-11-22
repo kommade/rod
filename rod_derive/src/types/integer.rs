@@ -14,7 +14,7 @@ use super::{optional_braced, user_defined_error, LengthOrSize, NumberSign, INTEG
 /// - `step`: An optional attribute that specifies that the integer must be a multiple of this value.
 /// # Usage
 /// ```
-/// use rod::prelude::*;
+/// use rod_validation::prelude::*;
 /// 
 /// #[derive(RodValidate)]
 /// struct MyEntity {

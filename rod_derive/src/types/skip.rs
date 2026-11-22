@@ -12,7 +12,7 @@ use super::optional_braced;
 /// 
 /// # Usage
 /// ```
-/// use rod::prelude::*;
+/// use rod_validation::prelude::*;
 /// #[derive(RodValidate)]
 /// struct MyEntity {
 ///     #[rod(skip)]

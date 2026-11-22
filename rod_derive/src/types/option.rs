@@ -31,7 +31,7 @@ macro_rules! rod_content_match {
 /// if you want to validate that the option is `None`, you can use `Option {}`.
 /// # Usage
 /// ```
-/// use rod::prelude::*;
+/// use rod_validation::prelude::*;
 /// 
 /// #[derive(RodValidate)]
 /// struct MyEntity {

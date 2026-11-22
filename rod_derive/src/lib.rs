@@ -1320,7 +1320,7 @@ fn build_meta_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
 /// # Examples
 ///
 /// ```
-/// use rod::prelude::*;
+/// use rod_validation::prelude::*;
 ///
 /// #[derive(RodValidate)]
 /// struct User {
@@ -1345,7 +1345,7 @@ fn build_meta_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
 /// This example demonstrates a struct that does not implement `RodValidate`.
 ///
 /// ```compile_fail
-/// use rod::prelude::*;
+/// use rod_validation::prelude::*;
 ///
 /// struct DoesNotImplementRodValidate {
 ///     field: String,
@@ -1366,7 +1366,7 @@ fn build_meta_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
 /// You can also define custom validations using the `check` attribute. Use a closure to define the validation logic.
 /// The closure should take a single argument, which is the field value, and return a boolean indicating whether the validation passed or failed.
 /// ```
-/// use rod::prelude::*;
+/// use rod_validation::prelude::*;
 /// #[derive(RodValidate)]
 /// struct MyEntity {
 ///    #[rod(

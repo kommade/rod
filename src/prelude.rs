@@ -8,7 +8,7 @@ pub use crate::{RodFieldMeta, RodMetadata, RodValidate};
 /// 
 /// Substruct does not implement `RodValidate`
 /// ```compile_fail
-/// use rod::prelude::*;
+/// use rod_validation::prelude::*;
 ///
 /// struct DoesNotImplementRodValidate {
 ///     field: String,
@@ -28,7 +28,7 @@ pub use crate::{RodFieldMeta, RodMetadata, RodValidate};
 /// 
 /// Wrongly nested Options
 /// ```compile_fail
-/// use rod::prelude::*;
+/// use rod_validation::prelude::*;
 /// 
 /// #[derive(RodValidate)]
 /// struct Test {
@@ -47,7 +47,7 @@ pub use crate::{RodFieldMeta, RodMetadata, RodValidate};
 /// 
 /// Option doesn't contain the correct type
 /// ```compile_fail
-/// use rod::prelude::*;
+/// use rod_validation::prelude::*;
 /// 
 /// #[derive(RodValidate)]
 /// struct Test {
@@ -64,7 +64,7 @@ pub use crate::{RodFieldMeta, RodMetadata, RodValidate};
 /// 
 /// Tuple doesn't contain the correct type
 /// ```compile_fail
-/// use rod::prelude::*;
+/// use rod_validation::prelude::*;
 /// 
 /// #[derive(RodValidate)]
 /// struct Test {
@@ -95,7 +95,7 @@ pub use crate::{RodFieldMeta, RodMetadata, RodValidate};
 /// 
 /// Wrongly nested Tuples
 /// ```compile_fail
-/// use rod::prelude::*;
+/// use rod_validation::prelude::*;
 /// 
 /// #[derive(RodValidate)]
 /// struct Test {
@@ -122,11 +122,11 @@ pub use crate::{RodFieldMeta, RodMetadata, RodValidate};
 /// }
 /// ```
 /// 
-/// Reference to a reference
-/// 
-/// ```compile_fail
-/// use rod::prelude::*;
-/// 
+/// Reference to a reference (supported at any depth since 0.4.0)
+///
+/// ```rust
+/// use rod_validation::prelude::*;
+///
 /// #[derive(RodValidate)]
 /// struct Test {
 ///    #[rod(
@@ -136,13 +136,20 @@ pub use crate::{RodFieldMeta, RodMetadata, RodValidate};
 ///            step: 2,
 ///        }
 ///    )]
-///    field: &'static &'static i32, // This will fail to compile
+///    field: &'static &'static i32,
 /// }
-/// 
+///
+/// static INNER: i32 = 6;
+/// static REF: &'static i32 = &INNER;
+///
+/// let test = Test { field: &REF };
+/// assert!(test.validate().is_ok());
+/// assert!(test.validate_all().is_ok());
 /// ```
+///
 /// Check syntax that doesn't return a boolean
 /// ```compile_fail
-/// use rod::prelude::*;
+/// use rod_validation::prelude::*;
 /// #[derive(RodValidate)]
 /// struct Test {
 ///     #[rod(
