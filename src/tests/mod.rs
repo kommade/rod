@@ -72,3 +72,8 @@ mod regex_tests;
 mod json_schema_tests;
 
 mod combinator_tests;
+
+/// Async validation against a real Tokio runtime (timers, spawned tasks,
+/// concurrent `join!`) — the plain async tests only use instantly-ready
+/// futures with the no-op-waker executor.
+mod tokio_tests;

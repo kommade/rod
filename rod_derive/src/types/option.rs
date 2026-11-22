@@ -1,6 +1,6 @@
 use proc_macro_error::abort;
 use syn::{parse::Parse, Ident, LitStr};
-use quote::{format_ident, quote};
+use quote::quote;
 
 use crate::{RodAttr, RodAttrContent};
 
