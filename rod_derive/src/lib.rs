@@ -517,6 +517,7 @@ enum RodExpr {
     Check(RodCheck),
     CheckAll(RodCheckAll),
     Message(RodMessage),
+    Description(RodDescription),
     Group(RodGroup),
     AsyncCheck(RodAsyncCheck),
     AsyncCheckAll(RodAsyncCheckAll),
@@ -527,6 +528,10 @@ impl Parse for RodExpr {
         if input.peek(Ident) && input.peek2(syn::Token![=]) {
             let ident: Ident = input.fork().parse()?;
             match ident.to_string().as_str() {
+                "description" => {
+                    let rod_description: RodDescription = input.parse()?;
+                    Ok(RodExpr::Description(rod_description))
+                }
                 "group" => {
                     let rod_group: RodGroup = input.parse()?;
                     Ok(RodExpr::Group(rod_group))
@@ -549,8 +554,18 @@ impl Parse for RodExpr {
                 }
             }
         } else if input.peek(Ident) && input.peek2(syn::Token![:]) {
-            let rod_message: RodMessage = input.parse()?;
-            Ok(RodExpr::Message(rod_message))
+            if input
+                .fork()
+                .parse::<Ident>()
+                .map(|ident| ident == "description")
+                .unwrap_or(false)
+            {
+                let rod_description: RodDescription = input.parse()?;
+                Ok(RodExpr::Description(rod_description))
+            } else {
+                let rod_message: RodMessage = input.parse()?;
+                Ok(RodExpr::Message(rod_message))
+            }
         } else {
             let rod_attr: RodAttr = input.parse()?;
             Ok(RodExpr::Attribute(rod_attr))
@@ -582,6 +597,28 @@ fn parse_field_rod(field: &syn::Field) -> (Option<LitStr>, Option<RodAttr>) {
         }
     }
     (group, rod_attr)
+}
+
+/// Extracts the `description: "..."` tag of a field's `#[rod(...)]`
+/// attributes, if any. Used for metadata and JSON Schema generation.
+fn parse_field_description(field: &syn::Field) -> Option<LitStr> {
+    let mut description: Option<LitStr> = None;
+    for attr in &field.attrs {
+        if !attr.path().is_ident("rod") {
+            continue;
+        }
+        let exprs = attr.parse_args_with(
+            syn::punctuated::Punctuated::<RodExpr, syn::Token![,]>::parse_terminated,
+        );
+        if let Ok(exprs) = exprs {
+            for expr in exprs {
+                if let RodExpr::Description(d) = expr {
+                    description = Some(d.description);
+                }
+            }
+        }
+    }
+    description
 }
 
 /// Whether a validated field participates unconditionally: everything except
@@ -1032,6 +1069,35 @@ struct RodMessage {
     span: proc_macro2::Span,
 }
 
+/// Parsed `description: "..."` attribute. Purely informational: it rides
+/// along on [`RodFieldMeta`](crate::RodFieldMeta) and the exported JSON
+/// Schema (the property's `"description"`), never changing validation.
+struct RodDescription {
+    description: LitStr,
+}
+
+impl Parse for RodDescription {
+    fn parse(input: ParseStream) -> SynResult<Self> {
+        let ident = input.parse::<Ident>()?;
+        if ident != "description" {
+            abort!(
+                ident.span(),
+                "Unknown attribute `{}`. Expected `message` or `description`",
+                ident
+            )
+        }
+        // Accepted both as `description = "..."` (group style) and
+        // `description: "..."` (message style).
+        if input.peek(syn::Token![=]) {
+            input.parse::<syn::Token![=]>()?;
+        } else {
+            input.parse::<syn::Token![:]>()?;
+        }
+        let description: LitStr = input.parse()?;
+        Ok(RodDescription { description })
+    }
+}
+
 impl Parse for RodMessage {
     fn parse(input: ParseStream) -> SynResult<Self> {
         let ident = input.parse::<Ident>()?;
@@ -1343,6 +1409,9 @@ macro_rules!  get_field_validations {
                                     }
                                     message_opt = Some(message);
                                 }
+                                // Descriptions ride along for metadata/schema
+                                // generation; validation codegen ignores them.
+                                RodExpr::Description(_) => {}
                                 RodExpr::Group(group) => {
                                     if group_opt.is_some() {
                                         abort!(
@@ -1737,16 +1806,22 @@ fn build_validation_code(
 fn meta_entry_tokens(
     name: String,
     group: &Option<LitStr>,
+    description: &Option<LitStr>,
     required: bool,
 ) -> proc_macro2::TokenStream {
     let group_tokens = match group {
         Some(group) => quote! { Some(#group) },
         None => quote! { None },
     };
+    let description_tokens = match description {
+        Some(description) => quote! { Some(#description) },
+        None => quote! { None },
+    };
     quote! {
         ::rod_validation::RodFieldMeta {
             name: #name,
             group: #group_tokens,
+            description: #description_tokens,
             required: #required,
         },
     }
@@ -1915,7 +1990,13 @@ fn build_meta_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
                         continue;
                     }
                     let field_name = field.ident.as_ref().unwrap().to_string();
-                    entries.push(meta_entry_tokens(field_name, &group, field_required(&rod_attr)));
+                    let description = parse_field_description(field);
+                    entries.push(meta_entry_tokens(
+                        field_name,
+                        &group,
+                        &description,
+                        field_required(&rod_attr),
+                    ));
                 }
             }
             // Newtype: the inner field is exposed as `__inner`.
@@ -1923,9 +2004,11 @@ fn build_meta_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
                 let field = fields_unnamed.unnamed.first().unwrap();
                 let (group, rod_attr) = parse_field_rod(field);
                 if !is_skipped_field(field, &rod_attr) {
+                    let description = parse_field_description(field);
                     entries.push(meta_entry_tokens(
                         "__inner".to_string(),
                         &group,
+                        &description,
                         field_required(&rod_attr),
                     ));
                 }
@@ -1942,7 +2025,13 @@ fn build_meta_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
                                 continue;
                             }
                             let field_name = format!("{}.{}", variant.ident, field.ident.as_ref().unwrap());
-                            entries.push(meta_entry_tokens(field_name, &group, field_required(&rod_attr)));
+                            let description = parse_field_description(field);
+                            entries.push(meta_entry_tokens(
+                                field_name,
+                                &group,
+                                &description,
+                                field_required(&rod_attr),
+                            ));
                         }
                     }
                     Fields::Unnamed(fields_unnamed) => {
@@ -1952,7 +2041,13 @@ fn build_meta_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
                                 continue;
                             }
                             let field_name = format!("{}.{}", variant.ident, idx);
-                            entries.push(meta_entry_tokens(field_name, &group, field_required(&rod_attr)));
+                            let description = parse_field_description(field);
+                            entries.push(meta_entry_tokens(
+                                field_name,
+                                &group,
+                                &description,
+                                field_required(&rod_attr),
+                            ));
                         }
                     }
                     Fields::Unit => {}

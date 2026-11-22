@@ -9,7 +9,7 @@ use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{Data, DataEnum, DataStruct, DeriveInput, ExprRange, Fields, LitInt, RangeLimits};
 
-use crate::{parse_field_rod, RodAttrContent};
+use crate::{parse_field_description, parse_field_rod, RodAttrContent};
 use crate::types::{LengthOrSize, NumberSign};
 
 /// A tiny compile-time JSON representation.
@@ -375,6 +375,16 @@ fn float_schema(content: &crate::types::RodFloatContent) -> Option<Json> {
     if let Some(sign) = content.sign() {
         fields.extend(sign_schema(sign));
     }
+    if let Some(step) = content.step() {
+        let n = match step {
+            syn::Lit::Float(l) => l.to_token_stream().to_string().parse::<f64>().ok(),
+            syn::Lit::Int(l) => l.base10_parse::<f64>().ok(),
+            _ => None,
+        };
+        if let Some(n) = n {
+            fields.push(("multipleOf", Json::n_f(n)));
+        }
+    }
     Some(Json::obj(fields))
 }
 
@@ -490,22 +500,37 @@ fn content_schema(content: &RodAttrContent) -> Option<Json> {
 /// field is skipped and should not appear in the schema at all.
 fn field_schema(field: &syn::Field) -> Option<(Option<Json>, bool)> {
     let (_, rod_attr) = parse_field_rod(field);
+    let description = parse_field_description(field);
     if rod_attr.is_none() && matches!(&field.ty, syn::Type::BareFn(_)) {
         // Callback fields (form handlers etc.) carry behavior, not data:
         // they are excluded from the schema exactly like `Skip` fields.
         return None;
     }
+    let attach = |schema: Option<Json>| -> Option<Json> {
+        match (schema, description.as_ref()) {
+            (Some(Json::Obj(mut pairs)), Some(desc)) => {
+                if !pairs.iter().any(|(k, _)| k == "description") {
+                    pairs.push(("description".to_string(), Json::Str(desc.value())));
+                }
+                Some(Json::Obj(pairs))
+            }
+            (schema, _) => schema,
+        }
+    };
     match &rod_attr {
         // Fields without a `rod` attribute must implement `RodValidate`
         // themselves; we cannot introspect their rules, so emit a generic object.
-        None => Some((Some(Json::obj(vec![("type", Json::s("object"))])), true)),
+        None => Some((
+            attach(Some(Json::obj(vec![("type", Json::s("object"))]))),
+            true,
+        )),
         Some(attr) => {
             let schema = content_schema(&attr.content);
             let required = !matches!(
                 &attr.content,
                 RodAttrContent::Skip(_) | RodAttrContent::Option(_)
             );
-            Some((schema, required))
+            Some((attach(schema), required))
         }
     }
 }

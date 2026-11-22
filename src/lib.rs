@@ -23,6 +23,9 @@ pub struct RodFieldMeta {
     pub name: &'static str,
     /// The `#[rod(group = "...")]` tag of the field, if any.
     pub group: Option<&'static str>,
+    /// The `#[rod(description = "...")]` tag of the field, if any — also
+    /// emitted as the JSON Schema `"description"` of the field's property.
+    pub description: Option<&'static str>,
     /// Whether the field participates unconditionally in validation.
     /// Fields with an `Option { ... }` rule are marked as not required,
     /// since a serde-serialized `null` is a valid representation for them.

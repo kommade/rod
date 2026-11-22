@@ -77,6 +77,9 @@ mod json_schema_tests;
 
 mod combinator_tests;
 
+/// Error report helpers, field descriptions, float step and ftype
+mod error_report_tests;
+
 /// Async validation against a real Tokio runtime (timers, spawned tasks,
 /// concurrent `join!`) — the plain async tests only use instantly-ready
 /// futures with the no-op-waker executor.
