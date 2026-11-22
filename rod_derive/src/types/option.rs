@@ -142,7 +142,7 @@ impl RodOptionContent {
         } else {
             let inner_validation = rod_content_match!(
                 &self.inner.as_ref().unwrap().content,
-                &format_ident!("opt"),
+                field_name,
                 wrap_return,
                 delegate,
                 [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
@@ -157,7 +157,7 @@ impl RodOptionContent {
             };
             quote! {
                 match &#field_name {
-                    Some(opt) => {
+                    Some(#field_name) => {
                         #inner_validation
                     }
                     None => {
@@ -182,7 +182,7 @@ impl RodOptionContent {
         } else {
             let inner_validation = rod_content_match!(
                 &self.inner.as_ref().unwrap().content,
-                &format_ident!("opt"),
+                field_name,
                 wrap_return,
                 delegate,
                 custom_error,
@@ -195,7 +195,7 @@ impl RodOptionContent {
             };
             quote! {
                 match &#field_name {
-                    Some(opt) => {
+                    Some(#field_name) => {
                         #inner_validation
                     }
                     None => {

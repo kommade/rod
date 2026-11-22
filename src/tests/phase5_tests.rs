@@ -120,6 +120,79 @@ fn option_field_none_is_valid_some_is_validated() {
 }
 
 #[test]
+fn annotated_option_with_custom_inner_type() {
+    // The advisory for unannotated Options suggests exactly these spellings:
+    // the inner type's own name, or the `Custom` wildcard. Both make `None`
+    // invalid and delegate `Some` to the inner type's RodValidate impl.
+    #[derive(RodValidate)]
+    struct ByName {
+        #[rod(Option { Inner })]
+        address: Option<Inner>,
+    }
+
+    #[derive(RodValidate)]
+    struct ByWildcard {
+        #[rod(Option { Custom })]
+        address: Option<Inner>,
+    }
+
+    fn assert_delegation<T: rod_validation::RodValidate>(ok: &T, bad: &T) {
+        assert!(ok.validate_all().is_ok(), "{}", ok.validate_all().unwrap_err());
+        let errors = bad.validate_all().unwrap_err();
+        assert_eq!(errors.len(), 1, "{}", errors);
+        assert_eq!(errors.iter().next().unwrap().path(), vec!["address"]);
+    }
+
+    assert_delegation(
+        &ByName {
+            address: Some(Inner { digit: 3 }),
+        },
+        &ByName {
+            address: Some(Inner { digit: 99 }),
+        },
+    );
+    assert_delegation(
+        &ByWildcard {
+            address: Some(Inner { digit: 3 }),
+        },
+        &ByWildcard {
+            address: Some(Inner { digit: 99 }),
+        },
+    );
+
+    // `None` is invalid under both spellings (the field is required now).
+    assert!(ByName { address: None }.validate_all().is_err());
+    assert!(ByWildcard { address: None }.validate_all().is_err());
+}
+
+#[test]
+fn annotated_option_with_std_inner_rule() {
+    // The std-type spelling from the advisory: inner rod rule. Annotating
+    // with an inner rule makes `None` invalid (the field is required).
+    #[derive(RodValidate)]
+    struct Nickname {
+        #[rod(Option { String { length: 3..=6 } })]
+        nickname: Option<String>,
+    }
+
+    // None now fails, per the advisory's first resolution.
+    assert!(Nickname { nickname: None }.validate_all().is_err());
+    assert!(
+        Nickname {
+            nickname: Some("kim".to_string()),
+        }
+        .validate_all()
+        .is_ok()
+    );
+    let errors = Nickname {
+        nickname: Some("ki".to_string()),
+    }
+    .validate_all()
+    .unwrap_err();
+    assert_eq!(errors.len(), 1, "{}", errors);
+}
+
+#[test]
 fn recursive_type_via_option_box() {
     // Tree-shaped recursion: the Rust equivalent of a lazy
     // self-referencing schema.
@@ -491,11 +564,9 @@ fn iterable_item_custom_respects_group_selection() {
     // "other": the grouped field is skipped entirely.
     assert!(batch.validate_group("other").is_ok());
 
-    // "billing": the field runs and the group flows into each item.
+    // "billing": the field runs, the group flows into each item, and the
+    // failing item surfaces under the per-item `item` path segment.
     let errors = batch.validate_group("billing").unwrap_err();
     assert_eq!(errors.len(), 1, "{}", errors);
-    assert!(matches!(
-        errors.iter().next().unwrap(),
-        RodValidateError::Integer(_)
-    ));
+    assert_eq!(errors.iter().next().unwrap().path(), vec!["item"]);
 }

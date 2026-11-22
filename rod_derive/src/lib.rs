@@ -262,7 +262,13 @@ macro_rules! assert_type {
             RodAttrType::Option(_) => {
                 let inner_type = recurse_rod_attr_opt(&$expected, 0);
                 let inner_actual_type = recurse_type_path($ty, 0);
-                if inner_type.is_some() && inner_type != inner_actual_type {
+                // The bare `Custom` keyword is a wildcard for "implements
+                // `RodValidate`" (the blanket impls), so it is never
+                // type-checked against the inner type.
+                let inner_is_wildcard = inner_type
+                    .as_ref()
+                    .is_some_and(|(ty, _)| is_custom_wildcard(ty));
+                if inner_type.is_some() && !inner_is_wildcard && inner_type != inner_actual_type {
                     if let Some((inner_type, level)) = inner_type {
                         if let Some((inner_actual_type, actual_level)) = inner_actual_type {
                             if level != actual_level {
@@ -1359,7 +1365,7 @@ macro_rules! check_valid_rod_type {
                 $span,
                 "Field `{}` is an unannotated `Option<...>`: validation delegates to the inner type's own impl, so `None` is accepted.",
                 $field_name.as_ref().unwrap();
-                help = "If `None` should be invalid (field required), annotate the field with an inner rule: `#[rod(Option <inner rule>)]` — e.g. `#[rod(Option u8 { size: 1..=3 })]`.\nIf the field must always be `None`, annotate it with bare `#[rod(Option)]`.\nIf it should not be validated at all, use `#[rod(Skip)]`."
+                help = "If `None` should be invalid (field required), annotate the field with an inner rule: `#[rod(Option { <inner rule> })]`.\n  - inner type with a rod rule (std types): `#[rod(Option { u8 { size: 1..=3 } })]`\n  - inner type that implements `RodValidate` itself (your own / non-std types): name it — `#[rod(Option { MyType })]` — or use the wildcard `#[rod(Option { Custom })]`\nIf the field must always be `None`, annotate it with bare `#[rod(Option)]`.\nIf it should not be validated at all, use `#[rod(Skip)]`."
             )
         } else if RodAttrType::type_is_valid_rod_type(&$ty) {
             let valid_type = get_type(&$ty).unwrap();
