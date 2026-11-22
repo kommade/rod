@@ -449,6 +449,11 @@ fn content_schema(content: &RodAttrContent) -> Option<Json> {
 /// field is skipped and should not appear in the schema at all.
 fn field_schema(field: &syn::Field) -> Option<(Option<Json>, bool)> {
     let (_, rod_attr) = parse_field_rod(field);
+    if rod_attr.is_none() && matches!(&field.ty, syn::Type::BareFn(_)) {
+        // Callback fields (form handlers etc.) carry behavior, not data:
+        // they are excluded from the schema exactly like `Skip` fields.
+        return None;
+    }
     match &rod_attr {
         // Fields without a `rod` attribute must implement `RodValidate`
         // themselves; we cannot introspect their rules, so emit a generic object.

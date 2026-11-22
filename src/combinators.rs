@@ -416,10 +416,15 @@ pub trait RodParse: RodValidate + Sized {
 ///
 /// `validate_async` therefore validates *everything*: all synchronous rules
 /// first, then every `async_check`/`async_check_all`, returning one combined
-/// error list. Async-check closures must return `Send` futures; since checks
-/// run against `&self`, the validated type is additionally required to be
-/// `Sync`.
-pub trait AsyncValidator: RodValidate + Sync {
+/// error list.
+///
+/// The `Sync` bound lives on the **async methods**, not on the trait itself:
+/// async checks run against `&self` inside `Send` futures, so only callers
+/// of `validate_async`/`run_async_checks` need the validated type to be
+/// `Sync` (as most web types are). Structs that are intentionally
+/// single-threaded — e.g. holding `Rc` fields or non-`Sync` futures — still
+/// derive fine; they simply cannot call the async methods.
+pub trait AsyncValidator: RodValidate {
     /// Hook for the derive-generated `async_check` steps.
     ///
     /// Returns the errors produced by the type's async checks. The default
@@ -427,7 +432,10 @@ pub trait AsyncValidator: RodValidate + Sync {
     /// declaring at least one `async_check`.
     fn run_async_checks(
         &self,
-    ) -> impl std::future::Future<Output = Vec<RodValidateError>> + Send {
+    ) -> impl std::future::Future<Output = Vec<RodValidateError>> + Send
+    where
+        Self: Sync,
+    {
         std::future::ready(Vec::new())
     }
 
@@ -435,7 +443,10 @@ pub trait AsyncValidator: RodValidate + Sync {
     /// all synchronous rules plus every `async_check`.
     fn validate_async(
         &self,
-    ) -> impl std::future::Future<Output = Result<(), RodValidateErrorList>> + Send {
+    ) -> impl std::future::Future<Output = Result<(), RodValidateErrorList>> + Send
+    where
+        Self: Sync,
+    {
         async move {
             let mut errors = match self.validate_all() {
                 Ok(()) => RodValidateErrorList::new(),

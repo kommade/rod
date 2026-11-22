@@ -18,6 +18,8 @@ A powerful and flexible compile-time validation library for Rust structs and enu
 - **Nested validation**: Support for complex nested data structures, including newtype structs; nested errors carry dotted field paths (`address.street: ...`)
 - **Parse pipeline**: `sanitize()` + `parse()` with per-field transforms (`trim`, `Option::default`) — normalize first, then validate
 - **Untrusted input**: JSON adapters that deserialize raw bytes/strings into your type and validate it, reporting which stage failed (with `serde` feature)
+- **Std-container nesting**: `Box<T>`, `Rc<T>`, `Arc<T>`, `Vec<T>` and `Option<T>` around any validated type delegate automatically — including recursive trees
+- **Callback fields**: unattributed `fn`-pointer fields (form handlers and friends) are skipped with a compile-time nudge to declare the skip explicitly
 - **Per-validation custom errors**: Attach tailored messages to individual validation rules for precise feedback
 - **Validation groups**: Tag fields with `group = "..."` and validate them selectively (multi-step forms, wizards)
 - **Combinators**: `any`/`one`-of, conditional, cross-field and pipeline validation helpers
@@ -410,6 +412,44 @@ assert!(matches!(err, RodValidateError::String(_)));
 ```
 
 The inner field is named `__inner` in generated metadata, JSON Schema and custom-check paths, since it has no declared name. Everything composes: `check`, `async_check`, groups, and even wrapping *another* `RodValidate` type (delegation wraps errors in the `Nested` path wrapper). Unit structs validate trivially; multi-field tuple structs are rejected at compile time (use named fields).
+
+### Nesting through std containers
+
+Fields wrapped in `Box`, `Rc`, `Arc`, `Vec` or `Option` (with an inner `RodValidate` type) delegate automatically — no attribute needed. `None` values and empty collections are valid; failing items keep their full nesting path. This also enables **recursive schemas** (`Option<Box<Node>>` for the children), the natural Rust shape for self-referencing data:
+
+```rust
+#[derive(RodValidate)]
+struct Node {
+    #[rod(i32 { size: 0..=100 })]
+    value: i32,
+    left: Option<Box<Node>>,
+    right: Option<Box<Node>>,
+}
+
+// An invalid leaf three levels deep still reports the full path:
+// errors[0].path() == ["left", "left"]
+```
+
+Group selection flows through containers too: a nested type's grouped fields only participate when their group is requested.
+
+### Callback fields (fn pointers, held futures)
+
+Web-style structs often carry behavior next to data — an `on_submit: fn()`, a validation hook, or a `Pin<Box<dyn Future>>` task. Behavior isn't data, so it is not validated:
+
+- **Unattributed `fn`-pointer fields are skipped automatically**, with a compile-time warning asking you to write `#[rod(Skip)]` instead — the skip should be intentional, and stay correct if the field's type ever changes
+- **Held futures and other non-`Sync` values need the explicit `#[rod(Skip)]`** (a `Pin<Box<dyn Future>>` field can't be told apart from a data type by name)
+
+```rust
+#[derive(RodValidate)]
+struct FormHandler {
+    #[rod(String { length: 3..=12 })]
+    username: String,
+    on_submit: fn(),          // auto-skipped, warns; prefer the line below
+    // on_submit: #[rod...] — just write `#[rod(Skip)] on_submit: fn(),`
+}
+```
+
+One trade-off to know: the derive always implements `AsyncValidator`, but the **async** methods (`validate_async`, `run_async_checks`) carry a `where Self: Sync` bound — they run checks against `&self` inside `Send` futures. Sync-only structs (holding `Rc`) validate happily with `validate`/`validate_all`; they simply can't call the async methods.
 
 ## Enums
 

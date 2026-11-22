@@ -52,6 +52,10 @@ mod parse_tests;
 /// Tests for distinct iterables and check_all multi-issue closures
 mod phase4_tests;
 
+/// Tests for std-container impls (Box/Rc/Arc/Vec/Option), recursive types
+/// and callback fields (fn pointers, held futures)
+mod phase5_tests;
+
 /// Tests for the untrusted-input adapters (serde)
 #[cfg(feature = "serde")]
 mod adapter_tests;

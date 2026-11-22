@@ -628,7 +628,10 @@ fn build_async_checks_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
 
     quote! {
         impl ::rod_validation::AsyncValidator for #name {
-            fn run_async_checks(&self) -> impl ::core::future::Future<Output = Vec<::rod_validation::RodValidateError>> + Send {
+            fn run_async_checks(&self) -> impl ::core::future::Future<Output = Vec<::rod_validation::RodValidateError>> + Send
+            where
+                Self: ::core::marker::Sync,
+            {
                 async move {
                     #[allow(unused_mut)]
                     let mut rod_validate_async_errors: Vec<::rod_validation::RodValidateError> = Vec::new();
@@ -1067,7 +1070,8 @@ macro_rules!  get_field_validations {
     (
         $field_access:expr,
         $field:expr,
-        $wrap_return:expr
+        $wrap_return:expr,
+        $delegate:expr
     ) => {
         $field.attrs.iter().filter_map(|attr| {
             if attr.path().is_ident("rod") {
@@ -1264,8 +1268,9 @@ macro_rules!  get_field_validations {
                         let field_access = $field_access;
                         let path = field_access.to_string();
                         let ret = $wrap_return(quote! { e });
+                        let assert_call = $delegate(quote! { #field_access });
                         let mut code = quote! {
-                            let assert = assert_impl_rod_validate(#field_access);
+                            let assert = #assert_call;
                             if let Err(errs) = assert {
                                 let mut rod_nested_errors: Vec<RodValidateError> = Vec::new();
                                 for e in errs {
@@ -1318,7 +1323,14 @@ macro_rules!  get_field_validations {
 
 macro_rules! check_valid_rod_type {
     ($ty:expr, $span:expr, $field_name:expr) => {
-        if RodAttrType::type_is_valid_rod_type(&$ty) {
+        // Unattributed `Option<...>` fields delegate through the blanket
+        // `RodValidate for Option<T>` impl (None is valid, Some is
+        // validated) whenever the inner type is a validated type; when it
+        // is not, the generated check hard-errors with a clear message
+        // anyway. Advisory silenced either way.
+        if !is_option_type(&$ty)
+            && RodAttrType::type_is_valid_rod_type(&$ty)
+        {
             let valid_type = get_type(&$ty).unwrap();
             emit_warning!(
                 $span,
@@ -1331,13 +1343,40 @@ macro_rules! check_valid_rod_type {
     };
 }
 
+/// Whether the type is a bare `Option<...>` (used to silence the
+/// unannotated-field advisory; optionals delegate via the blanket impl).
+fn is_option_type(ty: &Type) -> bool {
+    matches!(ty, syn::Type::Path(path)
+        if path.path.segments.last().is_some_and(|s| s.ident == "Option"))
+}
+
 fn field_body(
     field: &syn::Field,
     access: &Ident,
     pre_bind: proc_macro2::TokenStream,
     wrap_validations: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream,
+    delegate: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream,
     guard: bool,
 ) -> proc_macro2::TokenStream {
+    let (group_opt, _) = parse_field_rod(field);
+
+    // Unattributed function-pointer fields are callbacks: they carry
+    // behavior, not data, so there is nothing to validate. This is what
+    // lets web-style structs hold form handlers next to validated data.
+    // The skip is automatic but SHOULD be expressed explicitly, so warn.
+    // If callbacks are the whole type, the derive itself is pointless.
+    if field.attrs.is_empty() && is_callback_field(field) {
+        emit_warning!(
+            field.ty.span(),
+            "Function-pointer field `{}` is skipped automatically; express the skip explicitly with `#[rod(Skip)]`.",
+            access;
+            help = "Add `#[rod(Skip)]` to the field to make the skip intentional (and kept if the field's type ever changes). If this type holds nothing but such fields, remove the derive entirely - there is nothing to validate."
+        );
+        // No binding needed: nothing is validated, and callback fields cannot
+        // carry a group (groups come from `#[rod(...)]` attributes).
+        return quote! {};
+    }
+
     // If no attributes are present, we assume it's a custom type that implements `RodValidate`
     // If a custom type appears inside a Rod type, it has to be explicitly annotated with `#[rod(...CustomType...)]`
     // The name of the custom type and the annotation must match
@@ -1348,8 +1387,9 @@ fn field_body(
         // Collect nested errors, then wrap each one so the field path is
         // preserved (`Nested` chains render as `outer.inner: ...`).
         let ret = wrap_validations(quote! { e });
+        let assert_call = delegate(quote! { #access });
         quote! {
-            let assert = assert_impl_rod_validate(#access);
+            let assert = #assert_call;
             if let Err(errs) = assert {
                 let mut rod_nested_errors: Vec<RodValidateError> = Vec::new();
                 for e in errs {
@@ -1361,10 +1401,10 @@ fn field_body(
             }
         }
     } else {
-        get_field_validations!(access, field, wrap_validations).collect::<proc_macro2::TokenStream>()
+        get_field_validations!(access, field, wrap_validations, delegate)
+            .collect::<proc_macro2::TokenStream>()
     };
 
-    let (group_opt, _) = parse_field_rod(field);
     let code = quote! { #pre_bind #body };
     match (guard, group_opt) {
         (true, Some(group_lit)) => quote! {
@@ -1382,6 +1422,7 @@ fn field_body(
 fn build_validation_code(
     ast: &DeriveInput,
     wrap_validations: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream,
+    delegate: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream,
     guard: bool,
 ) -> proc_macro2::TokenStream {
     match &ast.data {
@@ -1390,7 +1431,7 @@ fn build_validation_code(
                 let access = field.ident.as_ref().unwrap();
                 let member = syn::Member::Named(access.clone());
                 let pre_bind = struct_field_binding(access, &member, field);
-                field_body(field, access, pre_bind, wrap_validations, guard)
+                field_body(field, access, pre_bind, wrap_validations, delegate, guard)
             }).collect(),
             // Newtype struct: validate the single inner field, bound as `__inner`.
             Fields::Unnamed(fields_unnamed) if fields_unnamed.unnamed.len() == 1 => {
@@ -1398,7 +1439,7 @@ fn build_validation_code(
                 let access = syn::Ident::new("__inner", proc_macro2::Span::call_site());
                 let member = syn::Member::Unnamed(syn::Index::from(0));
                 let pre_bind = struct_field_binding(&access, &member, field);
-                field_body(field, &access, pre_bind, wrap_validations, guard)
+                field_body(field, &access, pre_bind, wrap_validations, delegate, guard)
             }
             // Multi-field tuple structs are not supported (use named fields).
             Fields::Unnamed(_) => abort!(
@@ -1418,7 +1459,7 @@ fn build_validation_code(
                         // Peel the extra reference layer added by the match
                         // pattern binding so checks see `&T_inner`.
                         let pre_bind = enum_field_binding(access, field);
-                        field_body(field, access, pre_bind, wrap_validations, guard)
+                        field_body(field, access, pre_bind, wrap_validations, delegate, guard)
                     }).collect(),
                     Fields::Unnamed(fields_unnamed) => {
                         let field_count = fields_unnamed.unnamed.len();
@@ -1428,7 +1469,7 @@ fn build_validation_code(
                         fields_unnamed.unnamed.iter().enumerate().map(|(idx, field)| {
                             let access = &field_idents[idx];
                             let pre_bind = enum_field_binding(access, field);
-                            field_body(field, access, pre_bind, wrap_validations, guard)
+                            field_body(field, access, pre_bind, wrap_validations, delegate, guard)
                         }).collect()
                     }
                     Fields::Unit => quote! {},
@@ -1491,6 +1532,35 @@ fn meta_entry_tokens(
 
 fn is_skip_content(rod_attr: &Option<RodAttr>) -> bool {
     matches!(rod_attr, Some(attr) if matches!(&attr.content, RodAttrContent::Skip(_)))
+}
+
+/// Builds the nested-delegation call for `validate`/`validate_all` bodies.
+/// The helper name refers to the `assert_impl_rod_validate` fn generated
+/// inside those methods (same hygiene scope).
+fn delegate_plain(access: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    quote! { assert_impl_rod_validate(#access) }
+}
+
+/// Builds the nested-delegation call for `validate_group` bodies: the group
+/// selector (`rod_group`, the generated method's parameter) flows into the
+/// nested type so group semantics apply recursively.
+fn delegate_group(access: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    quote! { assert_impl_rod_validate(#access, rod_group) }
+}
+
+/// Whether the field holds a bare function pointer (`fn(...) -> ...`). Such
+/// fields are callbacks: unattributed ones are auto-skipped (nothing to
+/// validate), like `#[rod(Skip)]` fields. Attributed callback fields follow
+/// their attribute as usual (`Skip`, or a rule that must then match the
+/// fn-pointer shape at compile time).
+fn is_callback_field(field: &syn::Field) -> bool {
+    matches!(&field.ty, syn::Type::BareFn(_))
+}
+
+/// Whether this field is validated trivially away: either an explicit
+/// `#[rod(Skip)]` or an unattributed function-pointer callback.
+fn is_skipped_field(field: &syn::Field, rod_attr: &Option<RodAttr>) -> bool {
+    is_skip_content(rod_attr) || (rod_attr.is_none() && is_callback_field(field))
 }
 
 /// One `Field -> Expr` sanitize step: the field's self-access member plus
@@ -1619,7 +1689,7 @@ fn build_meta_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
             Fields::Named(fields_named) => {
                 for field in &fields_named.named {
                     let (group, rod_attr) = parse_field_rod(field);
-                    if is_skip_content(&rod_attr) {
+                    if is_skipped_field(field, &rod_attr) {
                         continue;
                     }
                     let field_name = field.ident.as_ref().unwrap().to_string();
@@ -1630,7 +1700,7 @@ fn build_meta_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
             Fields::Unnamed(fields_unnamed) if fields_unnamed.unnamed.len() == 1 => {
                 let field = fields_unnamed.unnamed.first().unwrap();
                 let (group, rod_attr) = parse_field_rod(field);
-                if !is_skip_content(&rod_attr) {
+                if !is_skipped_field(field, &rod_attr) {
                     entries.push(meta_entry_tokens(
                         "__inner".to_string(),
                         &group,
@@ -1646,7 +1716,7 @@ fn build_meta_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
                     Fields::Named(fields_named) => {
                         for field in &fields_named.named {
                             let (group, rod_attr) = parse_field_rod(field);
-                            if is_skip_content(&rod_attr) {
+                            if is_skipped_field(field, &rod_attr) {
                                 continue;
                             }
                             let field_name = format!("{}.{}", variant.ident, field.ident.as_ref().unwrap());
@@ -1656,7 +1726,7 @@ fn build_meta_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
                     Fields::Unnamed(fields_unnamed) => {
                         for (idx, field) in fields_unnamed.unnamed.iter().enumerate() {
                             let (group, rod_attr) = parse_field_rod(field);
-                            if is_skip_content(&rod_attr) {
+                            if is_skipped_field(field, &rod_attr) {
                                 continue;
                             }
                             let field_name = format!("{}.{}", variant.ident, idx);
@@ -1814,13 +1884,13 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
         quote! {
             return Err(#ret);
         }
-    }, false);
+    }, delegate_plain, false);
 
     let all_validations = build_validation_code(&ast, |ret| {
         quote! {
             errors.push(#ret);
         }
-    }, false);
+    }, delegate_plain, false);
 
     // Only emit a `validate_group` override when the type actually uses groups.
     let group_override = if has_groups(&ast) {
@@ -1828,11 +1898,15 @@ pub fn derive_rod_validate(input: TokenStream) -> TokenStream {
             quote! {
                 errors.push(#ret);
             }
-        }, true);
+        }, delegate_group, true);
         quote! {
             fn validate_group(&self, rod_group: &str) -> Result<(), RodValidateErrorList> {
-                fn assert_impl_rod_validate<T: RodValidate>(value: &T) -> Result<(), RodValidateErrorList> {
-                    return value.validate_all();
+                fn assert_impl_rod_validate<T: RodValidate>(value: &T, rod_group: &str) -> Result<(), RodValidateErrorList> {
+                    // Group selection applies recursively: nested fields
+                    // validate with the same group, so unrelated groups
+                    // inside them stay silent and their ungrouped fields
+                    // still run (the blanket container impls forward this).
+                    return value.validate_group(rod_group);
                 }
                 let mut errors = RodValidateErrorList::new();
                 #group_validations

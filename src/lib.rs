@@ -43,7 +43,10 @@ pub trait RodValidate {
     /// Validate the struct, returning a list of errors if validation fails.
     fn validate_all(&self) -> Result<(), errors::RodValidateErrorList>;
     /// Validate only the fields tagged with `#[rod(group = "name")]` matching
-    /// the given group, plus every field that has no group.
+    /// the given group, plus every field that has no group. Group selection
+    /// applies recursively: nested `RodValidate` types (including through the
+    /// blanket `Box`/`Rc`/`Arc`/`Vec`/`Option` impls) validate with the same
+    /// group, so unrelated groups inside them stay silent.
     ///
     /// Types that don't use groups simply validate everything.
     fn validate_group(&self, _group: &str) -> Result<(), errors::RodValidateErrorList> {
@@ -126,6 +129,138 @@ pub trait RodValidate {
 // the deriving crate.
 #[cfg(feature = "serde")]
 pub use serde_json as __serde_json;
+
+// ---------------------------------------------------------------------------
+// Blanket impls for common std containers
+//
+// Fields whose type is `Box<T>`, `Rc<T>`, `Arc<T>`, `Vec<T>` or `Option<T>`
+// (all with `T: RodValidate`) now delegate automatically, so nested data can
+// use the usual Rust idioms — heap indirection, shared ownership, item
+// collections and optional values — without a manual `impl`:
+//
+// - `child: Option<Box<Node>>` makes recursive (tree-shaped) validation work,
+//   the Rust equivalent of lazy self-referencing schemas
+// - `address: Option<Address>` / `shipping: Vec<Address>` validate their
+//   contents; `None`/empty are valid
+//
+// Cyclical values (e.g. two `Rc`s pointing at each other) will recurse
+// until the stack overflows; the same is true of any recursive validator —
+// cycle at your own risk.
+// ---------------------------------------------------------------------------
+
+macro_rules! impl_rod_validate_for_deref_container {
+    ($($container:ident),* $(,)?) => {
+        $(
+            impl<T: RodValidate> RodValidate for $container<T> {
+                fn validate(&self) -> Result<(), errors::RodValidateError> {
+                    (**self).validate()
+                }
+                fn validate_all(&self) -> Result<(), errors::RodValidateErrorList> {
+                    (**self).validate_all()
+                }
+                fn validate_group(
+                    &self,
+                    group: &str,
+                ) -> Result<(), errors::RodValidateErrorList> {
+                    (**self).validate_group(group)
+                }
+                fn validate_all_groups(
+                    &self,
+                ) -> Result<(), errors::RodValidateErrorList> {
+                    (**self).validate_all_groups()
+                }
+            }
+        )*
+    };
+}
+
+use std::boxed::Box;
+use std::rc::Rc;
+use std::sync::Arc;
+
+impl_rod_validate_for_deref_container!(Box, Rc, Arc);
+
+/// `Vec<T>` validates every item in order; the first failure is returned by
+/// `validate`, `validate_all` collects across all items.
+impl<T: RodValidate> RodValidate for Vec<T> {
+    fn validate(&self) -> Result<(), errors::RodValidateError> {
+        for item in self {
+            item.validate()?;
+        }
+        Ok(())
+    }
+    fn validate_all(&self) -> Result<(), errors::RodValidateErrorList> {
+        let mut errors = errors::RodValidateErrorList::new();
+        for item in self {
+            if let Err(item_errors) = item.validate_all() {
+                for error in item_errors {
+                    errors.push(error);
+                }
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+    fn validate_group(
+        &self,
+        group: &str,
+    ) -> Result<(), errors::RodValidateErrorList> {
+        let mut errors = errors::RodValidateErrorList::new();
+        for item in self {
+            if let Err(item_errors) = item.validate_group(group) {
+                for error in item_errors {
+                    errors.push(error);
+                }
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+    fn validate_all_groups(
+        &self,
+    ) -> Result<(), errors::RodValidateErrorList> {
+        self.validate_all()
+    }
+}
+
+/// `Option<T>` validates the `Some` value; `None` is always valid.
+impl<T: RodValidate> RodValidate for Option<T> {
+    fn validate(&self) -> Result<(), errors::RodValidateError> {
+        match self {
+            Some(value) => value.validate(),
+            None => Ok(()),
+        }
+    }
+    fn validate_all(&self) -> Result<(), errors::RodValidateErrorList> {
+        match self {
+            Some(value) => value.validate_all(),
+            None => Ok(()),
+        }
+    }
+    fn validate_group(
+        &self,
+        group: &str,
+    ) -> Result<(), errors::RodValidateErrorList> {
+        match self {
+            Some(value) => value.validate_group(group),
+            None => Ok(()),
+        }
+    }
+    fn validate_all_groups(
+        &self,
+    ) -> Result<(), errors::RodValidateErrorList> {
+        match self {
+            Some(value) => value.validate_all_groups(),
+            None => Ok(()),
+        }
+    }
+}
 
 // Root re-exports: generated code refers to `::rod_validation::...` absolute
 // paths so it does not depend on the deriving crate's imports.
