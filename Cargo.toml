@@ -1,6 +1,6 @@
 [package]
 name = "rod_validation"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 authors = ["kommade"]
 description = "A lightweight and ergonomic validation library for Rust"
