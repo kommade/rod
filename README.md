@@ -10,7 +10,7 @@ A powerful and flexible compile-time validation library for Rust structs and enu
 
 - **Compile-time validation**: Validation rules are checked at compile time for type safety
 - **Declarative syntax**: Define validation rules using intuitive attribute macros
-- **Comprehensive type support**: Validate strings, integers, floats, options, tuples, and custom types
+- **Comprehensive type support**: Validate strings, integers, floats, options, tuples, collections (`Vec`/`VecDeque`/`HashSet`/`BTreeSet`) and key-value maps (`HashMap`/`BTreeMap`)
 - **Flexible error handling**: Choose between fail-fast or collect-all error reporting
 - **Custom validation**: Add custom validation logic with closures
 - **Multi-issue checks**: `check_all` and `async_check_all` closures collect every problem, not just the first
@@ -289,6 +289,8 @@ Issues are reported as `RodValidateError::UserDefined`. `check` and `check_all` 
 
 ### Iterable Validation
 
+The `Iterable` rule covers every sequence-like collection: `Vec`, `VecDeque`, `HashSet` and `BTreeSet`.
+
 ```rust
 #[derive(RodValidate)]
 struct IterableExample {
@@ -326,6 +328,33 @@ The `item` rule is **required**. Two special spellings:
       rows: Vec<GroupRow>, // each GroupRow validates itself per item
   }
   ```
+
+  `distinct` is redundant on `HashSet`/`BTreeSet` fields (entries are unique by construction) — the derive warns and asks you to remove it. Pointing `Iterable` at a `HashMap`/`BTreeMap` field is a compile error: use `Map` (below).
+
+### Map Validation
+
+Key-value collections (`HashMap`, `BTreeMap`) get a dedicated `Map` rule with a rule per side of every entry, plus an entry-count `length`:
+
+```rust
+use std::collections::HashMap;
+
+#[derive(RodValidate)]
+struct Cart {
+    #[rod(Map {
+        key: String { length: 1..=30 },
+        value: u32 { size: 1..=999 },
+        length: ..=50,
+    })]
+    quantities: HashMap<String, u32>,
+}
+```
+
+- Rule bodies are the same as plain fields, so they nest (e.g. `value: Iterable { item: u8 { size: 0..=9 } }`). Delegating a side to its own `RodValidate` impl uses a named type (`value: Line`) or the `Custom` wildcard; the delegated errors keep the entry path (`lines.value: ...`).
+- Each side must be explicit: omitting **both** `key` and `value` is a compile error, and `key: Skip` / `value: Skip` are the escape hatches (there is no silent default; a length-only map must write both skips).
+- `length` counts entries (`minProperties`/`maxProperties` in the JSON Schema output; the `value` rule becomes `additionalProperties`). Key rules are runtime-only — JSON Schema cannot express key constraints.
+- `distinct` is rejected: map keys are unique by construction.
+
+Both spellings are accepted — `Map { ... }` and the concrete type name, e.g. `#[rod(HashMap { key: ..., value: ... })]` on a `BTreeMap` field.
 
 ## Error Handling
 
@@ -852,7 +881,7 @@ The macro generates validation code that:
 
 #### Limitations
 
-1. **Union types**: Not supported (will generate `todo!()` panic)
+1. **Union types**: Not supported (will generate `unimplemented!()` panic)
 2. **Custom validation closures**: Must return `bool` type. Async closures (`async_check`) must return a `Send` future resolving to `bool`, and the type must be `Sync`
 
 ## Rust Features

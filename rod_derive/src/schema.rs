@@ -412,6 +412,45 @@ fn iterable_schema(content: &crate::types::RodIterableContent) -> Option<Json> {
     Some(Json::obj(fields))
 }
 
+/// Schema for a `Map` field: a JSON object whose properties (the values)
+/// are constrained by the `value` rule. The `length` becomes the property
+/// count bounds. Key rules are runtime-only: JSON Schema cannot express
+/// per-key constraints beyond string patterns, so they are not exported.
+fn map_schema(content: &crate::types::RodMapContent) -> Option<Json> {
+    let mut fields = vec![("type", Json::s("object"))];
+    // `value: Skip` leaves values unconstrained (blank schema).
+    let value_schema = content
+        .value
+        .as_ref()
+        .and_then(|v| content_schema(&v.content))
+        .unwrap_or(Json::Bool(true));
+    fields.push(("additionalProperties", value_schema));
+    if let Some(length) = content.length() {
+        match length {
+            LengthOrSize::Exact(exact) => {
+                if let Ok(n) = exact.base10_parse::<i128>() {
+                    fields.push(("minProperties", Json::n_i(n)));
+                    fields.push(("maxProperties", Json::n_i(n)));
+                }
+            }
+            LengthOrSize::Range(range) => {
+                let (start, end, inclusive) = range_bounds_i128(range);
+                if let Some(min) = start {
+                    fields.push(("minProperties", Json::n_i(min)));
+                }
+                if let Some(max) = end {
+                    if inclusive {
+                        fields.push(("maxProperties", Json::n_i(max)));
+                    } else {
+                        fields.push(("maxProperties", Json::n_i(max - 1)));
+                    }
+                }
+            }
+        }
+    }
+    Some(Json::obj(fields))
+}
+
 fn tuple_schema(content: &crate::types::RodTupleContent) -> Option<Json> {
     let prefix: Vec<Json> = content
         .fields
@@ -442,6 +481,7 @@ fn content_schema(content: &RodAttrContent) -> Option<Json> {
             ),
         },
         RodAttrContent::Iterable(i) => iterable_schema(i),
+        RodAttrContent::Map(m) => map_schema(m),
         RodAttrContent::Tuple(t) => tuple_schema(t),
     }
 }

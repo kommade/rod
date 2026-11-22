@@ -56,6 +56,10 @@ mod phase4_tests;
 /// and callback fields (fn pointers, held futures)
 mod phase5_tests;
 
+/// Tests for sets/VecDeque via `Iterable` and key-value maps via `Map`
+/// (keys, values, entry-count length, per-entry paths, groups, async)
+mod collection_tests;
+
 /// Tests for the untrusted-input adapters (serde)
 #[cfg(feature = "serde")]
 mod adapter_tests;

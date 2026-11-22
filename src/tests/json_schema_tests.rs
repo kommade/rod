@@ -238,6 +238,34 @@ fn test_schema_iterable_and_tuple() {
 }
 
 #[test]
+fn test_schema_map_field() {
+    use std::collections::HashMap;
+
+    #[derive(RodValidate)]
+    struct Collections {
+        #[rod(
+            Map {
+                key: String { length: 1..=10 },
+                value: i32 { size: 1..=99 },
+                length: 1..=3,
+            }
+        )]
+        amounts: HashMap<String, i32>,
+    }
+
+    let schema = Collections::to_json_schema();
+    let amounts = &schema["properties"]["amounts"];
+    // Maps are JSON objects whose values carry the `value` rule; the entry
+    // count becomes min/maxProperties. Key rules are runtime-only.
+    assert_eq!(amounts["type"], "object");
+    assert_eq!(amounts["additionalProperties"]["type"], "integer");
+    assert_eq!(amounts["additionalProperties"]["minimum"], 1);
+    assert_eq!(amounts["additionalProperties"]["maximum"], 99);
+    assert_eq!(amounts["minProperties"], 1);
+    assert_eq!(amounts["maxProperties"], 3);
+}
+
+#[test]
 fn test_schema_nested_custom_struct() {
     #[derive(RodValidate)]
     struct Inner {

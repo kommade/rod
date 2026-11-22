@@ -84,7 +84,7 @@ impl RodTupleContent {
                 &subfield_name,
                 wrap_return,
                 delegate,
-                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
+                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map]
             );
             quote! {
                 let #subfield_name = &#field_name.#i;
@@ -102,7 +102,7 @@ impl RodTupleContent {
                 wrap_return,
                 delegate,
                 custom_error,
-                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
+                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map]
             );
             quote! {
                 let #subfield_name = &#field_name.#i;

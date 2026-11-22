@@ -314,3 +314,6 @@ pub use custom::CustomContent;
 
 mod iterable;
 pub use iterable::RodIterableContent;
+
+mod map;
+pub use map::RodMapContent;

@@ -228,10 +228,120 @@ fn recurse_iterable(input: &RodAttr, level: usize) -> Option<(RodAttrType, usize
     }
 }
 
+/// The last path-segment identifier of a field's type, peeling references
+/// (`&HashSet<u8>` -> `"HashSet"`, `(u8, u8)` -> `None`).
+fn type_ident_str(ty: &Type) -> Option<String> {
+    let inner = innermost_type(ty);
+    match get_type(&inner) {
+        Some(TypeEnum::Type(ident)) => Some(ident.to_string()),
+        _ => None,
+    }
+}
+
+/// Whether the field type is a key-value map (the only shapes the `Map`
+/// rule can iterate entries of: `for (key, value) in map.into_iter()`).
+fn is_map_type(ty: &Type) -> bool {
+    matches!(type_ident_str(ty).as_deref(), Some("HashMap") | Some("BTreeMap"))
+}
+
+/// Whether the field type is a std collection with NO blanket `RodValidate`
+/// impl (only `Vec`/`Option`/`Box`/`Rc`/`Arc` have one). Unannotated fields
+/// of these types cannot validate as-is, so they get a dedicated advisory
+/// pointing at `Iterable`/`Map` instead of the generic valid-type warning.
+fn is_no_impl_collection_type(ty: &Type) -> bool {
+    matches!(
+        type_ident_str(ty).as_deref(),
+        Some("HashSet") | Some("BTreeSet") | Some("HashMap") | Some("BTreeMap") | Some("VecDeque")
+    )
+}
+
+/// Peels generic-argument index `arg_index` (`usize::MAX` = LAST argument)
+/// of `ty` repeatedly, mirroring `recurse_type_path`'s level accounting:
+/// the key side of `HashMap<K, V>` peels the first argument, the value side
+/// the last. Non-generic leaves convert through `TryInto<RodAttrType>`.
+fn recurse_type_path_arg(ty: &Type, arg_index: usize, level: usize) -> Option<(RodAttrType, usize)> {
+    if let Type::Path(type_path) = ty {
+        if let Some(segment) = type_path.path.segments.last() {
+            if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                let chosen = if arg_index == usize::MAX {
+                    args.args.last()?
+                } else {
+                    args.args.get(arg_index)?
+                };
+                if let syn::GenericArgument::Type(ty) = chosen {
+                    return recurse_type_path_arg(ty, arg_index, level + 1);
+                }
+            } else {
+                debug_assert!(
+                    <&syn::Type as TryInto<RodAttrType>>::try_into(ty).is_ok(),
+                    "Expected a valid rod type, but found: {:?}",
+                    ty
+                );
+                let attr_ty = ty.try_into().ok()?;
+                return Some((attr_ty, level));
+            }
+        }
+    }
+    None
+}
+
+/// Which `RodAttrType` the KEY rule of a (possibly nested) `Map` attr
+/// describes: recursing through nested `Iterable`/`Map`/`Option` wrappers
+/// so the level matches the peeled field type.
+fn recurse_map_key(input: &RodAttr, level: usize) -> Option<(RodAttrType, usize)> {
+    match &input.content {
+        RodAttrContent::Iterable(content) => recurse_iterable(content.item.as_ref(), level + 1),
+        RodAttrContent::Map(content) => recurse_map_key(content.key.as_deref()?, level + 1),
+        RodAttrContent::Option(content) => match &content.inner {
+            Some(inner) => recurse_map_key(&inner.as_ref(), level + 1),
+            None => None,
+        },
+        _ => Some((input.ty.clone(), level)),
+    }
+}
+
+/// Same as [`recurse_map_key`] for the VALUE rule of a (possibly nested)
+/// `Map` attr.
+fn recurse_map_value(input: &RodAttr, level: usize) -> Option<(RodAttrType, usize)> {
+    match &input.content {
+        RodAttrContent::Iterable(content) => recurse_iterable(content.item.as_ref(), level + 1),
+        RodAttrContent::Map(content) => recurse_map_value(content.value.as_deref()?, level + 1),
+        RodAttrContent::Option(content) => match &content.inner {
+            Some(inner) => recurse_map_value(&inner.as_ref(), level + 1),
+            None => None,
+        },
+        _ => Some((input.ty.clone(), level)),
+    }
+}
+
 macro_rules! assert_type {
     ($name:expr, $ty:expr, $expected:expr) => {
         match $expected.ty {
             RodAttrType::Iterable(_) => {
+                // A key-value map iterates ENTRIES, not items: pointing an
+                // `Iterable` rule at one would type-check the KEY half and
+                // then destructure every item as (key, value) - fail with
+                // the intended rule instead.
+                match type_ident_str($ty).as_deref() {
+                    Some("HashMap") | Some("BTreeMap") => abort!(
+                        $ty.span(), "Expected `{}` to be a sequence for the `Iterable` rule, but found the key-value map `{}`",
+                        $name, type_ident_str($ty).unwrap();
+                        help = "Use `#[rod(Map { key: <rule>, value: <rule> })]` for `HashMap`/`BTreeMap` fields - `Iterable` iterates items, not entries.";
+                    ),
+                    // Unique sets make `distinct` unfalsifiable; warn it off.
+                    Some("HashSet") | Some("BTreeSet") => {
+                        if let RodAttrContent::Iterable(content) = &$expected.content {
+                            if content.distinct {
+                                emit_warning!(
+                                    $ty.span(), "`distinct` on a `{}` field is redundant: set entries are unique by construction.",
+                                    type_ident_str($ty).unwrap();
+                                    help = "Remove `distinct` (and its `? ...` message, if any)."
+                                );
+                            }
+                        }
+                    }
+                    _ => {}
+                }
                 let item_type = recurse_iterable(&$expected, 0);
                 let item_actual_type = recurse_type_path($ty, 0);
                 // The bare `Custom` keyword (per the blanket impls) accepts
@@ -305,6 +415,64 @@ macro_rules! assert_type {
                             format!("Try using {} instead of {}", i.0.inner_type(), j.0.inner_type())
                         };
                     );
+                }
+            }
+            RodAttrType::Map(_) => {
+                // The generated code destructures `for (key, value) in ...`,
+                // which only compiles for key-value maps - verify the shape.
+                if !is_map_type($ty) {
+                    abort!(
+                        $ty.span(), "Expected `{}` to be a `HashMap` or `BTreeMap` for the `Map` rule, but found {}",
+                        $name, type_ident_str($ty).unwrap_or_else(|| "an unsupported type".to_string());
+                        help = "Use `Iterable` for sequences (Vec/VecDeque/HashSet/BTreeSet), or change the field type to a key-value map.";
+                    );
+                }
+                // Keys are the FIRST generic argument, values the LAST; both
+                // sides are compared against their rule like Iterable items,
+                // with the bare `Custom` keyword as the type-op wildcard.
+                let key_expected = recurse_map_key(&$expected, 0);
+                let key_actual = recurse_type_path_arg($ty, 0, 0);
+                let key_is_wildcard = key_expected.as_ref().is_some_and(|(ty, _)| is_custom_wildcard(ty));
+                if key_expected.is_some() && !key_is_wildcard && key_expected != key_actual {
+                    if let Some((key_expected, level)) = key_expected {
+                        if let Some((key_actual_type, actual_level)) = key_actual {
+                            if level != actual_level {
+                                abort!(
+                                    $name.span(), "Expected `{}` to have {}-nested `Map` keys, but found {}-nested `Map` keys",
+                                    $name, level, actual_level;
+                                    help = "Make sure the nesting levels match in the attribute and the type";
+                                );
+                            } else {
+                                abort!(
+                                    $name.span(), "Expected the `key` of `{}` to be a {} type, but found {}",
+                                    $name, key_expected, key_actual_type;
+                                    help = "Try using {} instead of {}", key_expected.inner_type(), get_type($ty).unwrap()
+                                );
+                            }
+                        }
+                    }
+                }
+                let value_expected = recurse_map_value(&$expected, 0);
+                let value_actual = recurse_type_path_arg($ty, usize::MAX, 0);
+                let value_is_wildcard = value_expected.as_ref().is_some_and(|(ty, _)| is_custom_wildcard(ty));
+                if value_expected.is_some() && !value_is_wildcard && value_expected != value_actual {
+                    if let Some((value_expected, level)) = value_expected {
+                        if let Some((value_actual_type, actual_level)) = value_actual {
+                            if level != actual_level {
+                                abort!(
+                                    $name.span(), "Expected `{}` to have {}-nested `Map` values, but found {}-nested `Map` values",
+                                    $name, level, actual_level;
+                                    help = "Make sure the nesting levels match in the attribute and the type";
+                                );
+                            } else {
+                                abort!(
+                                    $name.span(), "Expected the `value` of `{}` to be a {} type, but found {}",
+                                    $name, value_expected, value_actual_type;
+                                    help = "Try using {} instead of {}", value_expected.inner_type(), get_type($ty).unwrap()
+                                );
+                            }
+                        }
+                    }
                 }
             }
             RodAttrType::Skip(_) => {
@@ -1077,6 +1245,11 @@ impl_rod_types! {
         content: types::RodIterableContent,
         match: ["Iterable"]
     },
+    Map {
+        ident: Ident,
+        content: types::RodMapContent,
+        match: ["Map", "HashMap", "BTreeMap"]
+    },
 }
 
 macro_rules! rod_content_match {
@@ -1210,7 +1383,7 @@ macro_rules!  get_field_validations {
                                 $wrap_return, 
                                 $delegate,
                                 &message.message, 
-                                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
+                                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map]
                             )
                         } else {
                             rod_content_match!(
@@ -1218,7 +1391,7 @@ macro_rules!  get_field_validations {
                                 $field_access, 
                                 $wrap_return, 
                                 $delegate,
-                                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
+                                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map]
                             )
                         };
                         let field_access = $field_access;
@@ -1366,6 +1539,18 @@ macro_rules! check_valid_rod_type {
                 "Field `{}` is an unannotated `Option<...>`: validation delegates to the inner type's own impl, so `None` is accepted.",
                 $field_name.as_ref().unwrap();
                 help = "If `None` should be invalid (field required), annotate the field with an inner rule: `#[rod(Option { <inner rule> })]`.\n  - inner type with a rod rule (std types): `#[rod(Option { u8 { size: 1..=3 } })]`\n  - inner type that implements `RodValidate` itself (your own / non-std types): name it — `#[rod(Option { MyType })]` — or use the wildcard `#[rod(Option { Custom })]`\nIf the field must always be `None`, annotate it with bare `#[rod(Option)]`.\nIf it should not be validated at all, use `#[rod(Skip)]`."
+            )
+        } else if is_no_impl_collection_type(&$ty) {
+            // Std sets/maps/VecDeque have NO blanket delegation impl (only
+            // Vec/Option/Box/Rc/Arc do), so without a rule the generated
+            // delegation simply does not compile - point straight at the
+            // shape-specific rule instead of the generic warning.
+            let kind = type_ident_str(&$ty).unwrap_or_default();
+            emit_warning!(
+                $span,
+                "Field `{}` is an unannotated `{}`: std collections have no blanket `RodValidate` impl (only `Vec`/`Option`/`Box`/`Rc`/`Arc` do), so this field cannot validate as-is.",
+                $field_name.as_ref().unwrap(), kind;
+                help = "Sequences: `#[rod(Iterable { item: <rule> })]` - works for Vec, VecDeque, HashSet and BTreeSet; `item: Skip` / `item: Custom` are the explicit escape hatches.\nKey-value maps: `#[rod(Map { key: <rule>, value: <rule> })]` for HashMap/BTreeMap; `key: Skip` / `value: Skip` opt a side out.\nIf it should not be validated at all, use `#[rod(Skip)]`."
             )
         } else if RodAttrType::type_is_valid_rod_type(&$ty) {
             let valid_type = get_type(&$ty).unwrap();
