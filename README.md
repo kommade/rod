@@ -654,7 +654,7 @@ The macro generates validation code that:
 
 ## Documentation
 
-For detailed documentation and examples, visit [docs.rs/rod](https://docs.rs/rod).
+For detailed documentation and examples, visit [docs.rs/rod_validation](https://docs.rs/rod_validation).
 
 ## License
 
