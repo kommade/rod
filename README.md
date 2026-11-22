@@ -169,6 +169,13 @@ Number signs:
 
 Zero-ness is also available as a *type* via std's `NonZero<iN>` / `NonZero<uN>` family — fields of those types validate trivially with no attribute and no feature (zero-ness is a type invariant), inside every container (`Vec<NonZeroU8>`, `Option<NonZeroI32>`, ...). Range checks stay in rules or `check` closures.
 
+### Float Validation
+
+```rust
+#[derive(RodValidate)]
+struct FloatExample {
+    #[rod(f64 {
+        size: 0.0..=100.0,  // Value between 0.0 and 100.0
         sign: NonNegative,  // Must be non-negative
         ftype: Finite,      // Must be finite (not NaN or infinite)
         step: 0.5,          // Must be a multiple of 0.5
