@@ -317,3 +317,11 @@ pub use iterable::RodIterableContent;
 
 mod map;
 pub use map::RodMapContent;
+
+mod datetime;
+pub use datetime::{RodDateContent, RodNaiveDateTimeContent, RodTimeContent, RodZonedDateTimeContent};
+
+mod uuid_rule;
+pub use uuid_rule::RodUuidContent;
+mod url_rule;
+pub use url_rule::RodUrlContent;

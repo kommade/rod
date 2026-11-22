@@ -809,8 +809,12 @@ use chrono::NaiveDate;
 struct Booking {
     #[rod(u8 { size: 1..=3 })]
     nights: u8,
-    // Unattributed chrono fields validate trivially: the type system
-    // already guarantees the value is a real date/time.
+    // Attribute rules: inclusive min/max bounds, validated at compile
+    // time (month lengths and leap days included).
+    #[rod(NaiveDate {
+        min: "2026-01-01",
+        max: "2026-12-31",
+    })]
     check_in: NaiveDate,
     check_in_at: NaiveDateTime,
     // Annotated delegation: `None` becomes invalid, `Some` delegates.
@@ -818,6 +822,19 @@ struct Booking {
     confirmed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 ```
+
+Typed rule bodies (each keyword IS the field's Rust type):
+
+| Rule | Field types | Attributes |
+|---|---|---|
+| `NaiveDate` | `NaiveDate` | `min: "YYYY-MM-DD"`, `max` — inclusive |
+| `NaiveTime` | `NaiveTime` | `min: "HH:MM[:SS]"`, `max` |
+| `NaiveDateTime` | `NaiveDateTime` | `min`/`max`: `"YYYY-MM-DDTHH:MM[:SS]"` |
+| `DateTime` | `DateTime<Tz>` (Utc, Local, FixedOffset, chrono-tz) | same bounds, interpreted as UTC |
+| `Uuid` | `uuid::Uuid` | `version: 1..=8` |
+| `Url` | `url::Url` | `scheme`, `host` (exact), `host_suffix` |
+
+All are optional (bare `NaiveDate {}` = trivially valid), compose with `? "message"` custom errors, and work everywhere rules do — `item:` inside `Iterable`, `key:`/`value:` inside `Map`, inside `Option { ... }`, and with `check` closures on top.Bounds export as `x-rod-min`/`x-rod-max` next to the existing `format` hints (`date`/`time`/`date-time`/`uuid`/`uri`; zoneless `NaiveDateTime` keeps the `x-rod-format: "naive-date-time"` marker), the uuid version as `x-rod-uuid-version`, and the url checks as `x-rod-url-scheme`/`-host`/`-host-suffix`.
 
 Covered types: `NaiveDate`, `NaiveTime`, `NaiveDateTime`, `DateTime<Tz>` (so `Utc`, `Local`, `FixedOffset` and chrono-tz zones), and `chrono::Duration` — all valid by construction. Constraint checking belongs at the wire boundary (string formats like `format: Date`) or in `check` closures.
 

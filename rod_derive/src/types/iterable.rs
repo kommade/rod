@@ -186,7 +186,7 @@ impl RodIterableContent {
                 wrap_return,
                 delegate,
                 msg,
-                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map]
+                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map, Date, Time, DateTime, NaiveDateTime, UuidRule, UrlRule]
             )
         } else {
             rod_content_match!(
@@ -194,7 +194,7 @@ impl RodIterableContent {
                 &format_ident!("item"),
                 wrap_return,
                 delegate,
-                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map]
+                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map, Date, Time, DateTime, NaiveDateTime, UuidRule, UrlRule]
             )
         };
         let length_opt = self.length.as_ref().map(|length| {
@@ -225,7 +225,7 @@ impl RodIterableContent {
                 wrap_return,
                 delegate,
                 msg,
-                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map]
+                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map, Date, Time, DateTime, NaiveDateTime, UuidRule, UrlRule]
             )
         } else {
             rod_content_match!(
@@ -234,7 +234,7 @@ impl RodIterableContent {
                 wrap_return,
                 delegate,
                 custom_error,
-                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map]
+                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map, Date, Time, DateTime, NaiveDateTime, UuidRule, UrlRule]
             )
         };
         let length_opt = self.length.as_ref().map(|length| {

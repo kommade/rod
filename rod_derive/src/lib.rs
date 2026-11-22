@@ -255,6 +255,34 @@ fn is_no_impl_collection_type(ty: &Type) -> bool {
     )
 }
 
+/// Whether the rod_derive feature backing `name` is on (the flags are
+/// forwarded from rod_validation's features, so this also answers whether
+/// the crate-dependency blanket impls exist).
+fn feature_enabled(name: &str) -> bool {
+    match name {
+        "chrono" => cfg!(feature = "chrono"),
+        "uuid" => cfg!(feature = "uuid"),
+        "url" => cfg!(feature = "url"),
+        _ => false,
+    }
+}
+
+/// Which crate feature a typed field's rule family needs, when the field's
+/// type resolves to one of the typed third-party kinds (`NaiveDate`,
+/// `NaiveTime`, `NaiveDateTime`, `DateTime`, `Uuid`, `Url`). Used for the
+/// feature advisory that replaces the generic valid-type warning: the
+/// blanket impls only exist with the feature enabled.
+fn typed_rule_feature(ty: &Type) -> Option<&'static str> {
+    match type_ident_str(ty).as_deref() {
+        Some("NaiveDate") | Some("NaiveTime") | Some("NaiveDateTime") | Some("DateTime") => {
+            Some("chrono")
+        }
+        Some("Uuid") => Some("uuid"),
+        Some("Url") => Some("url"),
+        _ => None,
+    }
+}
+
 /// Peels generic-argument index `arg_index` (`usize::MAX` = LAST argument)
 /// of `ty` repeatedly, mirroring `recurse_type_path`'s level accounting:
 /// the key side of `HashMap<K, V>` peels the first argument, the value side
@@ -1445,6 +1473,36 @@ impl_rod_types! {
         content: types::RodMapContent,
         match: ["Map", "HashMap", "BTreeMap"]
     },
+    Date {
+        ident: Ident,
+        content: types::RodDateContent,
+        match: ["NaiveDate"]
+    },
+    Time {
+        ident: Ident,
+        content: types::RodTimeContent,
+        match: ["NaiveTime"]
+    },
+    DateTime {
+        ident: Ident,
+        content: types::RodZonedDateTimeContent,
+        match: ["DateTime"]
+    },
+    NaiveDateTime {
+        ident: Ident,
+        content: types::RodNaiveDateTimeContent,
+        match: ["NaiveDateTime"]
+    },
+    UuidRule {
+        ident: Ident,
+        content: types::RodUuidContent,
+        match: ["Uuid"]
+    },
+    UrlRule {
+        ident: Ident,
+        content: types::RodUrlContent,
+        match: ["Url"]
+    },
 }
 
 macro_rules! rod_content_match {
@@ -1617,7 +1675,7 @@ macro_rules!  get_field_validations {
                                 $wrap_return, 
                                 $delegate,
                                 &message.message, 
-                                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map]
+                                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map, Date, Time, DateTime, NaiveDateTime, UuidRule, UrlRule]
                             )
                         } else {
                             rod_content_match!(
@@ -1625,7 +1683,7 @@ macro_rules!  get_field_validations {
                                 $field_access, 
                                 $wrap_return, 
                                 $delegate,
-                                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map]
+                                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map, Date, Time, DateTime, NaiveDateTime, UuidRule, UrlRule]
                             )
                         };
                         let field_access = $field_access;
@@ -1826,6 +1884,19 @@ macro_rules! check_valid_rod_type {
                 $field_name.as_ref().unwrap(), kind;
                 help = "Sequences: `#[rod(Iterable { item: <rule> })]` - works for Vec, VecDeque, HashSet and BTreeSet; `item: Skip` / `item: Custom` are the explicit escape hatches.\nKey-value maps: `#[rod(Map { key: <rule>, value: <rule> })]` for HashMap/BTreeMap; `key: Skip` / `value: Skip` opt a side out.\nIf it should not be validated at all, use `#[rod(Skip)]`."
             )
+        } else if let Some(feature) = typed_rule_feature(&$ty) {
+            // Typed third-party kinds (chrono/uuid/url). With the feature
+            // enabled the blanket impls exist and silent delegation is the
+            // intended behavior; without it the field has NO impl, so say
+            // exactly which feature to enable.
+            if !feature_enabled(feature) {
+                emit_warning!(
+                    $span,
+                    "Field `{}` is of type `{}`: typed support requires the `rod_validation/{}` feature; without it this type has no `RodValidate` impl and cannot validate.",
+                    $field_name.as_ref().unwrap(), type_ident_str(&$ty).unwrap(), feature;
+                    help = "Enable the feature (e.g. `rod_validation = {{ features = [\"{}\"] }}`), add `#[rod(Skip)]`, or drop the field from validation.", feature
+                )
+            }
         } else if RodAttrType::type_is_valid_rod_type(&$ty) {
             let valid_type = get_type(&$ty).unwrap();
             emit_warning!(

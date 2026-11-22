@@ -453,6 +453,17 @@ mod nonzero_impls {
 pub use combinators::{AsyncValidator, RodParse};
 pub use errors::{RodValidateError, RodValidateErrorList};
 
+// Re-exports of the optional typed crates: the generated code for the
+// typed rules (`NaiveDate { min: ... }`, `Uuid { version: 4 }`, `Url { ... }`)
+// references their types through `rod_validation` so the deriving crate does
+// not need them as direct dependencies beyond the field declarations.
+#[cfg(feature = "chrono")]
+pub use chrono;
+#[cfg(feature = "uuid")]
+pub use uuid;
+#[cfg(feature = "url")]
+pub use url;
+
 // Root re-export: generated code refers to `::rod_validation::ToJsonSchema`.
 #[cfg(feature = "serde")]
 pub use combinators::ToJsonSchema;

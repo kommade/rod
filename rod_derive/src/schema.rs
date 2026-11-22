@@ -480,6 +480,35 @@ fn tuple_schema(content: &crate::types::RodTupleContent) -> Option<Json> {
     ]))
 }
 
+/// A string schema with `format` plus rule-specific `x-rod-*` extensions.
+fn string_schema_with_exts(format: &'static str, exts: Vec<(&'static str, String)>) -> Json {
+    let mut pairs: Vec<(&str, Json)> = vec![("type", Json::s("string")), ("format", Json::s(format))];
+    for (key, value) in exts {
+        pairs.push((key, Json::s(value)));
+    }
+    Json::obj(pairs)
+}
+
+/// Typed datetime rules: `format` reflects the wire form (`date-time` for
+/// zoned, the x-rod extension for zoneless), bounds travel as `x-rod-min`/
+/// `x-rod-max` (JSON Schema has no ordering keywords for date strings).
+fn typed_datetime_schema(
+    format: Option<&'static str>,
+    naive_marker: Option<&'static str>,
+    exts: Vec<(&'static str, String)>,
+) -> Json {
+    let mut pairs: Vec<(&str, Json)> = vec![("type", Json::s("string"))];
+    match (format, naive_marker) {
+        (Some(format), _) => pairs.push(("format", Json::s(format))),
+        (None, Some(marker)) => pairs.push(("x-rod-format", Json::s(marker))),
+        (None, None) => {}
+    }
+    for (key, value) in exts {
+        pairs.push((key, Json::s(value)));
+    }
+    Json::obj(pairs)
+}
+
 fn content_schema(content: &RodAttrContent) -> Option<Json> {
     match content {
         RodAttrContent::Skip(_) => None,
@@ -500,6 +529,39 @@ fn content_schema(content: &RodAttrContent) -> Option<Json> {
         RodAttrContent::Iterable(i) => iterable_schema(i),
         RodAttrContent::Map(m) => map_schema(m),
         RodAttrContent::Tuple(t) => tuple_schema(t),
+        RodAttrContent::Date(c) => Some(typed_datetime_schema(
+            Some("date"),
+            None,
+            c.schema_exts(),
+        )),
+        RodAttrContent::Time(c) => Some(typed_datetime_schema(
+            Some("time"),
+            None,
+            c.schema_exts(),
+        )),
+        RodAttrContent::NaiveDateTime(c) => Some(typed_datetime_schema(
+            None,
+            Some("naive-date-time"),
+            c.schema_exts(),
+        )),
+        RodAttrContent::DateTime(c) => Some(typed_datetime_schema(
+            Some("date-time"),
+            None,
+            c.schema_exts(),
+        )),
+        RodAttrContent::UuidRule(c) => {
+            let mut pairs: Vec<(&str, Json)> =
+                vec![("type", Json::s("string")), ("format", Json::s("uuid"))];
+            if let Some(version) = &c.version {
+                if let Ok(n) = version.base10_parse::<i128>() {
+                    pairs.push(("x-rod-uuid-version", Json::n_i(n)));
+                }
+            }
+            Some(Json::obj(pairs))
+        }
+        RodAttrContent::UrlRule(c) => {
+            Some(string_schema_with_exts("uri", c.schema_exts()))
+        }
     }
 }
 

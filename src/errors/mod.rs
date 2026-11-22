@@ -206,4 +206,7 @@ rod_validation_types! {
     option, Option, OptionValidation,
     float, Float, FloatValidation,
     iterable, Iterable, IterableValidation,
+    datetime, Datetime, DatetimeValidation,
+    uuid, Uuid, UuidValidation,
+    url, Url, UrlValidation,
 }

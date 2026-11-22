@@ -145,7 +145,7 @@ impl RodOptionContent {
                 field_name,
                 wrap_return,
                 delegate,
-                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map]
+                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map, Date, Time, DateTime, NaiveDateTime, UuidRule, UrlRule]
             );
             let ty = self.inner.as_ref().unwrap().ty.to_string();
             let ret = if let Some(msg) = self.custom_none_error.as_ref() {
@@ -186,7 +186,7 @@ impl RodOptionContent {
                 wrap_return,
                 delegate,
                 custom_error,
-                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map]
+                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map, Date, Time, DateTime, NaiveDateTime, UuidRule, UrlRule]
             );
             let ret = if let Some(msg) = self.custom_none_error.as_ref() {
                 user_defined_error(wrap_return, msg)

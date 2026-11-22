@@ -244,14 +244,14 @@ impl RodMapContent {
                 wrap_return,
                 delegate,
                 msg,
-                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map]
+                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map, Date, Time, DateTime, NaiveDateTime, UuidRule, UrlRule]
             ),
             None => rod_content_match!(
                 &side.content,
                 &access,
                 wrap_return,
                 delegate,
-                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map]
+                [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable, Map, Date, Time, DateTime, NaiveDateTime, UuidRule, UrlRule]
             ),
         }
     }

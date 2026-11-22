@@ -90,6 +90,10 @@ mod chrono_tests;
 /// Typed uuid/url (feature-gated) and std NonZero* validation
 mod typed_id_tests;
 
+/// Typed attribute rules: datetime bounds, uuid version, url checks
+#[cfg(any(feature = "chrono", feature = "uuid", feature = "url"))]
+mod typed_rule_tests;
+
 /// Async validation against a real Tokio runtime (timers, spawned tasks,
 /// concurrent `join!`) — the plain async tests only use instantly-ready
 /// futures with the no-op-waker executor.
