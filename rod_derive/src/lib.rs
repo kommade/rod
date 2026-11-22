@@ -1349,14 +1349,19 @@ macro_rules!  get_field_validations {
 
 macro_rules! check_valid_rod_type {
     ($ty:expr, $span:expr, $field_name:expr) => {
-        // Unattributed `Option<...>` fields delegate through the blanket
-        // `RodValidate for Option<T>` impl (None is valid, Some is
-        // validated) whenever the inner type is a validated type; when it
-        // is not, the generated check hard-errors with a clear message
-        // anyway. Advisory silenced either way.
-        if !is_option_type(&$ty)
-            && RodAttrType::type_is_valid_rod_type(&$ty)
-        {
+        // Unattributed `Option<...>` fields get a DEDICATED advisory, not the
+        // generic one: leaving them unannotated means delegation semantics
+        // (`None` is valid, `Some` is validated by its own impl), which is
+        // easy to misread as "the Option rule is enforced". The wording must
+        // state that ambiguity explicitly.
+        if is_option_type(&$ty) {
+            emit_warning!(
+                $span,
+                "Field `{}` is an unannotated `Option<...>`: validation delegates to the inner type's own impl, so `None` is accepted.",
+                $field_name.as_ref().unwrap();
+                help = "If `None` should be invalid (field required), annotate the field with an inner rule: `#[rod(Option <inner rule>)]` — e.g. `#[rod(Option u8 { size: 1..=3 })]`.\nIf the field must always be `None`, annotate it with bare `#[rod(Option)]`.\nIf it should not be validated at all, use `#[rod(Skip)]`."
+            )
+        } else if RodAttrType::type_is_valid_rod_type(&$ty) {
             let valid_type = get_type(&$ty).unwrap();
             emit_warning!(
                 $span,
@@ -1369,8 +1374,8 @@ macro_rules! check_valid_rod_type {
     };
 }
 
-/// Whether the type is a bare `Option<...>` (used to silence the
-/// unannotated-field advisory; optionals delegate via the blanket impl).
+/// Whether the type is a bare `Option<...>` (drives the dedicated
+/// unannotated-`Option` advisory; optionals delegate via the blanket impl).
 fn is_option_type(ty: &Type) -> bool {
     matches!(ty, syn::Type::Path(path)
         if path.path.segments.last().is_some_and(|s| s.ident == "Option"))
