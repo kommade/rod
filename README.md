@@ -305,6 +305,28 @@ struct IterableExample {
 
 `distinct` may also be spelled `distinct = false` (the default) — e.g. to make the intention explicit. With the `serde` feature, `distinct` maps to `"uniqueItems": true` in the exported JSON Schema.
 
+The `item` rule is **required**. Two special spellings:
+
+- `item: Skip` validates only the collection's shape (`length`, `distinct`) and leaves the items entirely untouched — inner skipping is explicit, never a default:
+
+  ```rust
+  #[derive(RodValidate)]
+  struct Lottery {
+      #[rod(Iterable { item: Skip, distinct, length: 6 })]
+      numbers: Vec<u8>,
+  }
+  ```
+
+- `item: Custom` checks each item against its own `RodValidate` impl (any item type; the blanket container impls apply per item, so `validate_group`'s selection flows into them too):
+
+  ```rust
+  #[derive(RodValidate)]
+  struct Batch {
+      #[rod(Iterable { item: Custom, length: 1..=100 })]
+      rows: Vec<GroupRow>, // each GroupRow validates itself per item
+  }
+  ```
+
 ## Error Handling
 
 Rod provides two validation methods:

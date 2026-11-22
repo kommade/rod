@@ -380,6 +380,7 @@ fn float_schema(content: &crate::types::RodFloatContent) -> Option<Json> {
 
 fn iterable_schema(content: &crate::types::RodIterableContent) -> Option<Json> {
     let mut fields = vec![("type", Json::s("array"))];
+    // `item: Skip` leaves items unconstrained (Skip schemas to a blank).
     let item_schema = content_schema(&content.item.content).unwrap_or(Json::Bool(true));
     fields.push(("items", item_schema));
     if let Some(length) = content.length() {

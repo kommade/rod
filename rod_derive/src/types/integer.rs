@@ -49,7 +49,7 @@ impl RodIntegerContent {
         self.step.as_ref()
     }
 
-    pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, _delegate: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let path = field_name.to_string();
         let size_opt = self.size.as_ref().map(|size| {
             if let Some(msg) = self.custom_errors[0].as_ref() {
@@ -99,7 +99,7 @@ impl RodIntegerContent {
         }
     }
 
-    pub(crate) fn get_validations_with_custom_error(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
+    pub(crate) fn get_validations_with_custom_error(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, _delegate: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
         let size_opt = self.size.as_ref().map(|size| {
             if let Some(msg) = self.custom_errors[0].as_ref() {
                 size.validate_integer_with_custom_error(field_name, wrap_return, msg)

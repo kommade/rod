@@ -144,7 +144,7 @@ impl RodStringContent {
         self.includes.as_ref()
     }
 
-    pub(crate) fn get_validations(&self, field_name: &proc_macro2::Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    pub(crate) fn get_validations(&self, field_name: &proc_macro2::Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, _delegate: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let path = field_name.to_string();
         let length_opt = self.length.as_ref().map(|length| {
             if let Some(msg) = self.custom_errors[0].as_ref() {
@@ -223,7 +223,7 @@ impl RodStringContent {
             #includes_opt
         }
     }
-    pub(crate) fn get_validations_with_custom_error(&self, field_name: &proc_macro2::Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
+    pub(crate) fn get_validations_with_custom_error(&self, field_name: &proc_macro2::Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, _delegate: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
         let length_opt = self.length.as_ref().map(|length| {
             if let Some(msg) = self.custom_errors[0].as_ref() {
                 length.validate_string_with_custom_error(field_name, wrap_return, msg)

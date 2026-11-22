@@ -7,17 +7,17 @@ use crate::{RodAttr, RodAttrContent};
 use super::{optional_braced, user_defined_error};
 
 macro_rules! rod_content_match {
-    ($content:expr, $field_access:expr, $wrap_return:expr, [ $( $variant:ident ),* ]) => {
+    ($content:expr, $field_access:expr, $wrap_return:expr, $delegate:expr, [ $( $variant:ident ),* ]) => {
         match $content {
             $(
-                RodAttrContent::$variant(content) => content.get_validations($field_access, $wrap_return),
+                RodAttrContent::$variant(content) => content.get_validations($field_access, $wrap_return, $delegate),
             )*
         }
     };
-    ($content:expr, $field_access:expr, $wrap_return:expr, $custom_error:expr, [ $( $variant:ident ),* ]) => {
+    ($content:expr, $field_access:expr, $wrap_return:expr, $delegate:expr, $custom_error:expr, [ $( $variant:ident ),* ]) => {
         match $content {
             $(
-                RodAttrContent::$variant(content) => content.get_validations_with_custom_error($field_access, $wrap_return, $custom_error),
+                RodAttrContent::$variant(content) => content.get_validations_with_custom_error($field_access, $wrap_return, $delegate, $custom_error),
             )*
         }
     };
@@ -121,7 +121,7 @@ impl Parse for RodOptionContent {
 }
 
 impl RodOptionContent {
-    pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, delegate: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let path = field_name.to_string();
         if self.inner.is_none() {
             let ret = if let Some(msg) = self.custom_none_error.as_ref() {
@@ -144,6 +144,7 @@ impl RodOptionContent {
                 &self.inner.as_ref().unwrap().content,
                 &format_ident!("opt"),
                 wrap_return,
+                delegate,
                 [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
             );
             let ty = self.inner.as_ref().unwrap().ty.to_string();
@@ -166,7 +167,7 @@ impl RodOptionContent {
             }
         }
     }
-    pub(crate) fn get_validations_with_custom_error(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
+    pub(crate) fn get_validations_with_custom_error(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, delegate: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
         if self.inner.is_none() {
             let ret = if let Some(msg) = self.custom_none_error.as_ref() {
                 user_defined_error(wrap_return, msg)
@@ -183,6 +184,7 @@ impl RodOptionContent {
                 &self.inner.as_ref().unwrap().content,
                 &format_ident!("opt"),
                 wrap_return,
+                delegate,
                 custom_error,
                 [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
             );

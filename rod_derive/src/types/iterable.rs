@@ -7,23 +7,53 @@ use crate::{RodAttr, RodAttrContent};
 use super::{optional_braced, LengthOrSize};
 
 macro_rules! rod_content_match {
-    ($content:expr, $field_access:expr, $wrap_return:expr, [ $( $variant:ident ),* ]) => {
+    ($content:expr, $field_access:expr, $wrap_return:expr, $delegate:expr, [ $( $variant:ident ),* ]) => {
         match $content {
             $(
-                RodAttrContent::$variant(content) => content.get_validations($field_access, $wrap_return),
+                RodAttrContent::$variant(content) => content.get_validations($field_access, $wrap_return, $delegate),
             )*
         }
     };
-    ($content:expr, $field_access:expr, $wrap_return:expr, $custom_error:expr, [ $( $variant:ident ),* ]) => {
+    ($content:expr, $field_access:expr, $wrap_return:expr, $delegate:expr, $custom_error:expr, [ $( $variant:ident ),* ]) => {
         match $content {
             $(
-                RodAttrContent::$variant(content) => content.get_validations_with_custom_error($field_access, $wrap_return, $custom_error),
+                RodAttrContent::$variant(content) => content.get_validations_with_custom_error($field_access, $wrap_return, $delegate, $custom_error),
             )*
         }
     };
 }
 
 pub struct RodIterableContent {
+    /// The per-item rule. `Skip` as the rule (e.g.
+    /// `Iterable { item: Skip, length: 3 }`) checks only the collection
+    /// shape and leaves the items entirely unchecked - inner skipping is
+    /// always explicit, never a default.
+    ///
+    /// A length-only iterable checks only `length`/`distinct` and leaves
+    /// the items untouched:
+    ///
+    /// ```
+    /// use rod_validation::prelude::*;
+    ///
+    /// #[derive(RodValidate)]
+    /// struct Lottery {
+    ///     #[rod(Iterable { item: Skip, distinct, length: 6 })]
+    ///     numbers: Vec<u8>,
+    /// }
+    /// ```
+    ///
+    /// Omitting `item` altogether is a compile error, because silently
+    /// skipping inner validation would hide mistakes:
+    ///
+    /// ```compile_fail
+    /// use rod_validation::prelude::*;
+    ///
+    /// #[derive(RodValidate)]
+    /// struct Cart {
+    ///     #[rod(Iterable { length: 3 })]
+    ///     items: Vec<String>,
+    /// }
+    /// ```
     pub(crate) item: Box<RodAttr>,
     pub(crate) length: Option<LengthOrSize>,
     pub(crate) distinct: bool,
@@ -107,8 +137,9 @@ impl Parse for RodIterableContent {
             })
         } else {
             abort!(
-                input.span(), "Type Iterable must have an `item` attribute";
-                help = "Example: `#[rod(Iterable { item: String, length: 10 })]`"
+                input.span(),
+                "Type Iterable needs an `item` rule";
+                help = "Use `item: Skip` to validate only the length/distinct-ness and leave the items unchecked - inner skipping must be explicit. Example: `Iterable {{ item: Skip, length: 1..=5 }}`"
             );
         }
     }
@@ -143,12 +174,17 @@ impl RodIterableContent {
         }
     }
 
-    pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
-        let inner_validation = if let Some(msg) = self.custom_item_error.as_ref() {
+    pub(crate) fn get_validations(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, delegate: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+        // `item: Skip`: collection-shape checks only, no per-item loop.
+        let item_skipped = matches!(self.item.content, RodAttrContent::Skip(_));
+        let inner_validation = if item_skipped {
+            quote! {}
+        } else if let Some(msg) = self.custom_item_error.as_ref() {
             rod_content_match!(
                 &self.item.content,
                 &format_ident!("item"),
                 wrap_return,
+                delegate,
                 msg,
                 [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
             )
@@ -157,6 +193,7 @@ impl RodIterableContent {
                 &self.item.content,
                 &format_ident!("item"),
                 wrap_return,
+                delegate,
                 [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
             )
         };
@@ -176,12 +213,17 @@ impl RodIterableContent {
             }
         }
     }
-    pub(crate) fn get_validations_with_custom_error(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
-        let inner_validation_with_custom_error = if let Some(msg) = self.custom_item_error.as_ref() {
+    pub(crate) fn get_validations_with_custom_error(&self, field_name: &Ident, wrap_return: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, delegate: fn(proc_macro2::TokenStream) -> proc_macro2::TokenStream, custom_error: &LitStr) -> proc_macro2::TokenStream {
+        // `item: Skip`: collection-shape checks only, no per-item loop.
+        let item_skipped = matches!(self.item.content, RodAttrContent::Skip(_));
+        let inner_validation_with_custom_error = if item_skipped {
+            quote! {}
+        } else if let Some(msg) = self.custom_item_error.as_ref() {
             rod_content_match!(
                 &self.item.content,
                 &format_ident!("item"),
                 wrap_return,
+                delegate,
                 msg,
                 [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
             )
@@ -190,6 +232,7 @@ impl RodIterableContent {
                 &self.item.content,
                 &format_ident!("item"),
                 wrap_return,
+                delegate,
                 custom_error,
                 [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
             )

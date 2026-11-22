@@ -373,3 +373,129 @@ fn future_field_with_skip_compiles_and_skips() {
     };
     assert!(holder.validate_all().is_ok(), "{}", holder.validate_all().unwrap_err());
 }
+
+// ---------------------------------------------------------------------------
+// Explicit inner-skip iterables: `Iterable { item: Skip, ... }` validates
+// the collection shape and leaves the items entirely alone (skipping must
+// be written out); `item: Custom` delegates per item (group-aware).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn item_skip_iterable_validates_only_shape() {
+    #[derive(RodValidate)]
+    struct Cart {
+        #[rod(Iterable { item: Skip, length: 1..=3 })]
+        items: Vec<Inner>,
+    }
+
+    // Length ok; the items' own rule (digit 0..=9) is never checked.
+    assert!(
+        Cart {
+            items: vec![Inner { digit: 99 }, Inner { digit: 42 }],
+        }
+        .validate_all()
+        .is_ok()
+    );
+
+    // Length violation surfaces as an Iterable error.
+    let err = Cart { items: vec![] }.validate().unwrap_err();
+    assert!(matches!(err, RodValidateError::Iterable(_)), "{}", err);
+
+    let errors = Cart { items: vec![] }.validate_all().unwrap_err();
+    // The field path lives in the Length variant (top-level attributed
+    // field, no Nested wrapping).
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            RodValidateError::Iterable(IterableValidation::Length(path, ..)) if *path == "items"
+        )),
+        "{}",
+        errors
+    );
+}
+
+#[test]
+fn item_skip_iterable_with_distinct() {
+    #[derive(RodValidate)]
+    struct Lottery {
+        #[rod(Iterable { item: Skip, distinct, length: 6 })]
+        numbers: Vec<u8>,
+    }
+
+    assert!(
+        Lottery {
+            numbers: vec![1, 5, 9, 20, 33, 49],
+        }
+        .validate_all()
+        .is_ok()
+    );
+    let errors = Lottery {
+        numbers: vec![1, 1, 9, 20, 33, 49],
+    }
+    .validate_all()
+    .unwrap_err();
+    assert_eq!(errors.len(), 1, "{}", errors);
+    assert!(matches!(
+        errors.iter().next().unwrap(),
+        RodValidateError::Iterable(IterableValidation::Distinct(_))
+    ));
+}
+
+#[test]
+fn iterable_item_custom_delegates_per_item() {
+    #[derive(RodValidate)]
+    struct Cart {
+        #[rod(Iterable { item: Custom, length: 1..=3 })]
+        items: Vec<Inner>,
+    }
+
+    assert!(
+        Cart {
+            items: vec![Inner { digit: 1 }, Inner { digit: 9 }],
+        }
+        .validate_all()
+        .is_ok()
+    );
+
+    // Both failing items collected.
+    let errors = Cart {
+        items: vec![Inner { digit: 10 }, Inner { digit: 20 }],
+    }
+    .validate_all()
+    .unwrap_err();
+    assert_eq!(errors.len(), 2, "{}", errors);
+}
+
+#[test]
+fn iterable_item_custom_respects_group_selection() {
+    #[derive(RodValidate)]
+    struct GroupRow {
+        #[rod(group = "billing", u8 { size: 0..=9 })]
+        amount: u8,
+    }
+
+    #[derive(RodValidate)]
+    struct Batch {
+        #[rod(group = "billing", Iterable { item: Custom })]
+        rows: Vec<GroupRow>,
+    }
+
+    let batch = Batch {
+        rows: vec![GroupRow { amount: 99 }],
+    };
+
+    // validate_all: per-item delegation runs everything.
+    let errors = batch.validate_all().unwrap_err();
+    assert_eq!(errors.len(), 1, "{}", errors);
+
+    // "other": the grouped field is skipped entirely.
+    assert!(batch.validate_group("other").is_ok());
+
+    // "billing": the field runs and the group flows into each item.
+    let errors = batch.validate_group("billing").unwrap_err();
+    assert_eq!(errors.len(), 1, "{}", errors);
+    assert!(matches!(
+        errors.iter().next().unwrap(),
+        RodValidateError::Integer(_)
+    ));
+}

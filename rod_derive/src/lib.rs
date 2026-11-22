@@ -234,7 +234,12 @@ macro_rules! assert_type {
             RodAttrType::Iterable(_) => {
                 let item_type = recurse_iterable(&$expected, 0);
                 let item_actual_type = recurse_type_path($ty, 0);
-                if item_type.is_some() && item_type != item_actual_type {
+                // The bare `Custom` keyword (per the blanket impls) accepts
+                // any item type, so it is never type-checked.
+                let item_is_wildcard = item_type
+                    .as_ref()
+                    .is_some_and(|(ty, _)| is_custom_wildcard(ty));
+                if item_type.is_some() && !item_is_wildcard && item_type != item_actual_type {
                     if let Some((item_type, level)) = item_type {
                         if let Some((item_actual_type, actual_level)) = item_actual_type {
                             if level != actual_level {
@@ -301,7 +306,13 @@ macro_rules! assert_type {
             }
             _ => {
                 let actual_type: RodAttrType = $ty.into();
-                if actual_type != $expected.ty && !matches!($expected.ty, RodAttrType::Literal(_)) {
+                // `Literal` matches its own type; the bare `Custom` keyword
+                // is a wildcard for "any type implementing RodValidate" (per
+                // the blanket impls), so neither is type-checked here.
+                if actual_type != $expected.ty
+                    && !matches!($expected.ty, RodAttrType::Literal(_))
+                    && !is_custom_wildcard(&$expected.ty)
+                {
                     abort!(
                         $ty.span(), "Expected `{}` to be a {} type, but found {}",
                         $name, $expected.ty, actual_type;
@@ -312,6 +323,19 @@ macro_rules! assert_type {
         }
 
     };
+}
+
+/// Whether the attribute type is the literal `Custom` keyword (as opposed to
+/// a named custom type like `Inner`), which asserts only "implements
+/// `RodValidate`" and accepts any item type.
+fn is_custom_wildcard(ty: &RodAttrType) -> bool {
+    match ty {
+        RodAttrType::Custom(ident) => match ident {
+            TypeEnum::Type(name) => name == "Custom",
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 enum RodExpr {
@@ -1050,17 +1074,17 @@ impl_rod_types! {
 }
 
 macro_rules! rod_content_match {
-    ($content:expr, $field_access:expr, $wrap_return:expr, [ $( $variant:ident ),* ]) => {
+    ($content:expr, $field_access:expr, $wrap_return:expr, $delegate:expr, [ $( $variant:ident ),* ]) => {
         match $content {
             $(
-                RodAttrContent::$variant(content) => content.get_validations($field_access, $wrap_return),
+                RodAttrContent::$variant(content) => content.get_validations($field_access, $wrap_return, $delegate),
             )*
         }
     };
-    ($content:expr, $field_access:expr, $wrap_return:expr, $custom_error:expr, [ $( $variant:ident ),* ]) => {
+    ($content:expr, $field_access:expr, $wrap_return:expr, $delegate:expr, $custom_error:expr, [ $( $variant:ident ),* ]) => {
         match $content {
             $(
-                RodAttrContent::$variant(content) => content.get_validations_with_custom_error($field_access, $wrap_return, $custom_error),
+                RodAttrContent::$variant(content) => content.get_validations_with_custom_error($field_access, $wrap_return, $delegate, $custom_error),
             )*
         }
     };
@@ -1178,6 +1202,7 @@ macro_rules!  get_field_validations {
                                 &rod_attr.content, 
                                 $field_access, 
                                 $wrap_return, 
+                                $delegate,
                                 &message.message, 
                                 [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
                             )
@@ -1186,6 +1211,7 @@ macro_rules!  get_field_validations {
                                 &rod_attr.content, 
                                 $field_access, 
                                 $wrap_return, 
+                                $delegate,
                                 [String, Integer, Literal, Boolean, Option, Float, Tuple, Skip, Custom, Iterable]
                             )
                         };
