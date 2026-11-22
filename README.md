@@ -290,6 +290,32 @@ assert_eq!(errors.len(), 2);
 
 Issues are reported as `RodValidateError::UserDefined`. `check` and `check_all` are mutually exclusive on the same field (compile error). A field may also carry **only** `check_all` (no rule): validation then first delegates to the field type's own `RodValidate` impl, and the closure runs on top.
 
+#### Path-aware issues (check_all_paths)
+
+When an issue should point at a specific sub-location instead of the whole field, use `check_all_paths`: the closure returns `Vec<(&'static str, &'static str)>` — one `(path, message)` pair per issue. Each pair is reported as `Nested(field, Nested(path, UserDefined))`, so the dotted path is `field.path` and `field_errors()` groups the issue under the **field** (never under the bare sub-path, which could leak into another field's bucket):
+
+```rust
+#[derive(RodValidate)]
+struct Cart {
+    #[rod(
+        Iterable { item: u8 { size: 0..=9 } },
+        check_all_paths = |items: &Vec<u8>| {
+            let mut issues = Vec::new();
+            if items.contains(&5) {
+                issues.push(("items", "five is not allowed"));
+            }
+            issues
+        }
+    )]
+    rows: Vec<u8>,
+}
+
+let errors = Cart { rows: vec![5, 1] }.validate_all().unwrap_err();
+assert_eq!(errors.iter().next().unwrap().path(), vec!["rows", "items"]);
+```
+
+The async twin `async_check_all_paths = |x| async { vec of pairs }` behaves identically inside `validate_async`. Both are multi-issue forms: mutually exclusive with `check`/`check_all` (and their async counterparts) on the same field.
+
 ### Iterable Validation
 
 The `Iterable` rule covers every sequence-like collection: `Vec`, `VecDeque`, `HashSet` and `BTreeSet`.

@@ -80,6 +80,9 @@ mod combinator_tests;
 /// Error report helpers, field descriptions, float step and ftype
 mod error_report_tests;
 
+/// Path-aware multi-issue checks (`check_all_paths`/`async_check_all_paths`)
+mod check_paths_tests;
+
 /// Async validation against a real Tokio runtime (timers, spawned tasks,
 /// concurrent `join!`) — the plain async tests only use instantly-ready
 /// futures with the no-op-waker executor.

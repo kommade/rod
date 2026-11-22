@@ -516,11 +516,13 @@ enum RodExpr {
     Attribute(RodAttr),
     Check(RodCheck),
     CheckAll(RodCheckAll),
+    CheckAllPaths(RodCheckAllPaths),
     Message(RodMessage),
     Description(RodDescription),
     Group(RodGroup),
     AsyncCheck(RodAsyncCheck),
     AsyncCheckAll(RodAsyncCheckAll),
+    AsyncCheckAllPaths(RodAsyncCheckAllPaths),
 }
 
 impl Parse for RodExpr {
@@ -547,6 +549,14 @@ impl Parse for RodExpr {
                 "check_all" => {
                     let rod_check_all: RodCheckAll = input.parse()?;
                     Ok(RodExpr::CheckAll(rod_check_all))
+                }
+                "check_all_paths" => {
+                    let rod_check_all_paths: RodCheckAllPaths = input.parse()?;
+                    Ok(RodExpr::CheckAllPaths(rod_check_all_paths))
+                }
+                "async_check_all_paths" => {
+                    let rod_async_check_all_paths: RodAsyncCheckAllPaths = input.parse()?;
+                    Ok(RodExpr::AsyncCheckAllPaths(rod_async_check_all_paths))
                 }
                 _ => {
                     let rod_check: RodCheck = input.parse()?;
@@ -643,15 +653,17 @@ fn has_groups(ast: &DeriveInput) -> bool {
     fields.iter().any(|f| parse_field_rod(f).0.is_some())
 }
 
-/// Extracts the async check closures (`async_check` and `async_check_all`)
-/// plus the field's optional `message: "..."` override from a field's
-/// `#[rod(...)]` attributes. Returns `(fail_fast_checks, multi_issue_check,
-/// message)`; both check lists may be empty.
+/// Extracts the async check closures (`async_check`, `async_check_all` and
+/// `async_check_all_paths`) plus the field's optional `message: "..."`
+/// override from a field's `#[rod(...)]` attributes. Returns
+/// `(fail_fast_checks, multi_issue_check, multi_issue_pathed, message)`;
+/// the check lists may be empty.
 fn parse_field_async_checks(
     field: &syn::Field,
-) -> (Vec<ExprClosure>, Option<ExprClosure>, Option<LitStr>) {
+) -> (Vec<ExprClosure>, Option<ExprClosure>, Option<ExprClosure>, Option<LitStr>) {
     let mut checks: Vec<ExprClosure> = Vec::new();
     let mut check_all: Option<ExprClosure> = None;
+    let mut check_all_paths: Option<ExprClosure> = None;
     let mut message: Option<LitStr> = None;
     for attr in &field.attrs {
         if !attr.path().is_ident("rod") {
@@ -665,13 +677,14 @@ fn parse_field_async_checks(
                 match expr {
                     RodExpr::AsyncCheck(c) => checks.push(c.closure),
                     RodExpr::AsyncCheckAll(c) => check_all = Some(c.closure),
+                    RodExpr::AsyncCheckAllPaths(c) => check_all_paths = Some(c.closure),
                     RodExpr::Message(m) => message = Some(m.message),
                     _ => {}
                 }
             }
         }
     }
-    (checks, check_all, message)
+    (checks, check_all, check_all_paths, message)
 }
 
 /// Whether any field of the type carries an `async_check` or
@@ -685,8 +698,8 @@ fn has_async_checks(ast: &DeriveInput) -> bool {
     fields
         .iter()
         .any(|f| {
-            let (checks, check_all, _) = parse_field_async_checks(f);
-            !checks.is_empty() || check_all.is_some()
+            let (checks, check_all, check_all_paths, _) = parse_field_async_checks(f);
+            !checks.is_empty() || check_all.is_some() || check_all_paths.is_some()
         })
 }
 
@@ -730,6 +743,30 @@ fn async_check_all_tokens(
     }
 }
 
+/// Like [`async_check_all_tokens`] but every message rides with a
+/// closure-chosen path segment; each (path, message) pair becomes
+/// `Nested(field, Nested(path, UserDefined))` so `run_async_checks`
+/// results group under the field like the sync path-aware checks.
+fn async_check_all_paths_tokens(
+    access: &Ident,
+    closure: &ExprClosure,
+) -> proc_macro2::TokenStream {
+    let field_path = access.to_string();
+    quote! {
+        for (rod_issue_path, rod_issue_msg) in (#closure)(#access).await {
+            rod_validate_async_errors.push(
+                ::rod_validation::RodValidateError::Nested(
+                    #field_path,
+                    ::std::boxed::Box::new(::rod_validation::RodValidateError::Nested(
+                        rod_issue_path,
+                        ::std::boxed::Box::new(::rod_validation::RodValidateError::UserDefined(rod_issue_msg.to_string())),
+                    )),
+                )
+            );
+        }
+    }
+}
+
 /// Generates `impl AsyncValidator for #name`, overriding
 /// `run_async_checks` when the type declares `async_check` or
 /// `async_check_all` fields. Sync rules never await; async checks are only
@@ -749,8 +786,8 @@ fn build_async_checks_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
             Fields::Named(fields_named) => {
                 let mut code = quote! {};
                 for field in &fields_named.named {
-                    let (checks, check_all, message) = parse_field_async_checks(field);
-                    if checks.is_empty() && check_all.is_none() {
+                    let (checks, check_all, check_all_paths, message) = parse_field_async_checks(field);
+                    if checks.is_empty() && check_all.is_none() && check_all_paths.is_none() {
                         continue;
                     }
                     let access = field.ident.as_ref().unwrap();
@@ -763,6 +800,9 @@ fn build_async_checks_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
                     if let Some(closure) = &check_all {
                         field_checks.extend(async_check_all_tokens(access, closure, message.as_ref()));
                     }
+                    if let Some(closure) = &check_all_paths {
+                        field_checks.extend(async_check_all_paths_tokens(access, closure));
+                    }
                     code.extend(quote! { #pre_bind #field_checks });
                 }
                 code
@@ -770,7 +810,7 @@ fn build_async_checks_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
             // Newtype: the single inner field is bound as `__inner`.
             Fields::Unnamed(fields_unnamed) if fields_unnamed.unnamed.len() == 1 => {
                 let field = fields_unnamed.unnamed.first().unwrap();
-                let (checks, check_all, message) = parse_field_async_checks(field);
+                let (checks, check_all, check_all_paths, message) = parse_field_async_checks(field);
                 let access = syn::Ident::new("__inner", proc_macro2::Span::call_site());
                 let member = syn::Member::Unnamed(syn::Index::from(0));
                 let pre_bind = struct_field_binding(&access, &member, field);
@@ -780,6 +820,9 @@ fn build_async_checks_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
                 }
                 if let Some(closure) = &check_all {
                     field_checks.extend(async_check_all_tokens(&access, closure, message.as_ref()));
+                }
+                if let Some(closure) = &check_all_paths {
+                    field_checks.extend(async_check_all_paths_tokens(&access, closure));
                 }
                 quote! { #pre_bind #field_checks }
             }
@@ -792,8 +835,8 @@ fn build_async_checks_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
                     Fields::Named(fields_named) => {
                         let mut checks = quote! {};
                         for field in &fields_named.named {
-                            let (closures, check_all, message) = parse_field_async_checks(field);
-                            if closures.is_empty() && check_all.is_none() {
+                            let (closures, check_all, check_all_paths, message) = parse_field_async_checks(field);
+                            if closures.is_empty() && check_all.is_none() && check_all_paths.is_none() {
                                 continue;
                             }
                             let access = field.ident.as_ref().unwrap();
@@ -804,6 +847,9 @@ fn build_async_checks_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
                             if let Some(closure) = &check_all {
                                 checks.extend(async_check_all_tokens(access, closure, message.as_ref()));
                             }
+                            if let Some(closure) = &check_all_paths {
+                                checks.extend(async_check_all_paths_tokens(access, closure));
+                            }
                         }
                         checks
                     }
@@ -813,8 +859,8 @@ fn build_async_checks_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
                             .collect();
                         let mut checks = quote! {};
                         for (idx, field) in fields_unnamed.unnamed.iter().enumerate() {
-                            let (closures, check_all, message) = parse_field_async_checks(field);
-                            if closures.is_empty() && check_all.is_none() {
+                            let (closures, check_all, check_all_paths, message) = parse_field_async_checks(field);
+                            if closures.is_empty() && check_all.is_none() && check_all_paths.is_none() {
                                 continue;
                             }
                             let access = &bindings[idx];
@@ -824,6 +870,9 @@ fn build_async_checks_impl(ast: &DeriveInput) -> proc_macro2::TokenStream {
                             }
                             if let Some(closure) = &check_all {
                                 checks.extend(async_check_all_tokens(access, closure, message.as_ref()));
+                            }
+                            if let Some(closure) = &check_all_paths {
+                                checks.extend(async_check_all_paths_tokens(access, closure));
                             }
                         }
                         checks
@@ -1058,6 +1107,86 @@ impl Parse for RodAsyncCheckAll {
             );
         }
         Ok(RodAsyncCheckAll {
+            closure: expr,
+            span,
+        })
+    }
+}
+
+/// Parsed `check_all_paths = |x| ...` attribute: the path-aware twin of
+/// `check_all`. The closure returns `Vec<(&'static str, &'static str)>` —
+/// a path segment plus a message per issue. Every pair becomes
+/// `Nested(field, Nested(path, UserDefined))`, so the issue surfaces under
+/// the FIELD in `path()`/`field_errors()` (a bare path would leak into
+/// another field's bucket). Mutually exclusive with `check` and `check_all`
+/// (compile error).
+struct RodCheckAllPaths {
+    closure: ExprClosure,
+    span: proc_macro2::Span,
+}
+
+/// Parsed `async_check_all_paths = |x| ...`: the awaited twin of
+/// [`RodCheckAllPaths`], collected by `AsyncValidator::validate_async`.
+/// Mutually exclusive with `async_check` and `async_check_all`.
+struct RodAsyncCheckAllPaths {
+    closure: ExprClosure,
+    span: proc_macro2::Span,
+}
+
+impl Parse for RodCheckAllPaths {
+    fn parse(input: ParseStream) -> SynResult<Self> {
+        let ident = input.parse::<Ident>()?;
+        if ident != "check_all_paths" {
+            abort!(
+                ident.span(),
+                "Unknown attribute `{}`. Expected `check_all_paths`",
+                ident
+            )
+        }
+        input.parse::<syn::Token![=]>()?;
+        let expr: ExprClosure = input.parse()?;
+        let span = ident
+            .span()
+            .join(expr.span())
+            .unwrap_or_else(|| proc_macro2::Span::call_site());
+        if expr.inputs.len() != 1 {
+            abort!(
+                expr.span(), "Expected a single argument for `check_all_paths` closure, but found {} arguments",
+                expr.inputs.len();
+                help = "Make sure the closure has exactly one argument"
+            );
+        }
+        Ok(RodCheckAllPaths {
+            closure: expr,
+            span,
+        })
+    }
+}
+
+impl Parse for RodAsyncCheckAllPaths {
+    fn parse(input: ParseStream) -> SynResult<Self> {
+        let ident = input.parse::<Ident>()?;
+        if ident != "async_check_all_paths" {
+            abort!(
+                ident.span(),
+                "Unknown attribute `{}`. Expected `async_check_all_paths`",
+                ident
+            )
+        }
+        input.parse::<syn::Token![=]>()?;
+        let expr: ExprClosure = input.parse()?;
+        let span = ident
+            .span()
+            .join(expr.span())
+            .unwrap_or_else(|| proc_macro2::Span::call_site());
+        if expr.inputs.len() != 1 {
+            abort!(
+                expr.span(), "Expected a single argument for `async_check_all_paths` closure, but found {} arguments",
+                expr.inputs.len();
+                help = "Make sure the closure has exactly one argument"
+            );
+        }
+        Ok(RodAsyncCheckAllPaths {
             closure: expr,
             span,
         })
@@ -1351,6 +1480,8 @@ macro_rules!  get_field_validations {
                 let mut group_opt: Option<LitStr> = None;
                 let mut async_check_opt = None;
                 let mut async_check_all_opt = None;
+                let mut check_all_paths_opt = None;
+                let mut async_check_all_paths_opt = None;
                 match attr.parse_args_with(syn::punctuated::Punctuated::<RodExpr, syn::Token![,]>::parse_terminated) {
                     Ok(exprlist) => {
                         for expr in exprlist {
@@ -1390,6 +1521,24 @@ macro_rules!  get_field_validations {
                                         );
                                     }
                                     async_check_all_opt = Some(async_check_all);
+                                }
+                                RodExpr::CheckAllPaths(check_all_paths) => {
+                                    if check_all_paths_opt.is_some() {
+                                        abort!(
+                                            check_all_paths.span, "Multiple `check_all_paths` attributes found on field `{}`", $field_access;
+                                            help = "Remove the extra `check_all_paths` attributes"
+                                        );
+                                    }
+                                    check_all_paths_opt = Some(check_all_paths);
+                                }
+                                RodExpr::AsyncCheckAllPaths(async_check_all_paths) => {
+                                    if async_check_all_paths_opt.is_some() {
+                                        abort!(
+                                            async_check_all_paths.span, "Multiple `async_check_all_paths` attributes found on field `{}`", $field_access;
+                                            help = "Remove the extra `async_check_all_paths` attributes"
+                                        );
+                                    }
+                                    async_check_all_paths_opt = Some(async_check_all_paths);
                                 }
                                 RodExpr::Attribute(rod_attr) => {
                                     if rod_attr_opt.is_some() {
@@ -1440,6 +1589,22 @@ macro_rules!  get_field_validations {
                     abort!(
                         async_check_all.span, "Cannot use both `async_check` and `async_check_all` on field `{}`", $field_access;
                         help = "Combine them into one `async_check_all` closure that yields the messages of both."
+                    );
+                }
+                if let (Some(_async_check), Some(async_check_all_paths)) =
+                    (async_check_opt.as_ref(), async_check_all_paths_opt.as_ref())
+                {
+                    abort!(
+                        async_check_all_paths.span, "Cannot use both `async_check` and `async_check_all_paths` on field `{}`", $field_access;
+                        help = "Combine them into one `async_check_all_paths` closure that yields the (path, message) pairs of both."
+                    );
+                }
+                if let (Some(_async_check_all), Some(async_check_all_paths)) =
+                    (async_check_all_opt.as_ref(), async_check_all_paths_opt.as_ref())
+                {
+                    abort!(
+                        async_check_all_paths.span, "Cannot use both `async_check_all` and `async_check_all_paths` on field `{}`", $field_access;
+                        help = "Pick one multi-issue closure: `async_check_all` for plain messages, `async_check_all_paths` for (path, message) issues."
                     );
                 }
                 match rod_attr_opt {
@@ -1513,8 +1678,48 @@ macro_rules!  get_field_validations {
                                 }
                             }
                         });
+                        let check_all_paths = check_all_paths_opt.as_ref().map_or_else(|| quote! {}, |check_all_paths| {
+                            if matches!(rod_attr.ty, RodAttrType::Skip(_)) {
+                                abort!(
+                                    check_all_paths.span, "Cannot use `check_all_paths` with `skip` attribute on field `{}`", $field_access;
+                                    help = "Remove the `check_all_paths` attribute"
+                                );
+                            }
+                            if check_opt.is_some() {
+                                abort!(
+                                    check_all_paths.span, "Cannot use both `check` and `check_all_paths` on field `{}`", $field_access;
+                                    help = "Combine them into one `check_all_paths` closure that yields the (path, message) pairs of both."
+                                );
+                            }
+                            if check_all_opt.is_some() {
+                                abort!(
+                                    check_all_paths.span, "Cannot use both `check_all` and `check_all_paths` on field `{}`", $field_access;
+                                    help = "Pick one multi-issue closure: `check_all` for plain messages, `check_all_paths` for (path, message) issues."
+                                );
+                            }
+                            let closure = &check_all_paths.closure;
+                            // Two Nested layers: the field prefixes the
+                            // closure-chosen path so the issue groups under
+                            // the field in path()/field_errors() instead of
+                            // leaking into another field's bucket.
+                            let field_path = $field_access.to_string();
+                            let ret = $wrap_return(quote! {
+                                RodValidateError::Nested(#field_path, ::std::boxed::Box::new(
+                                    RodValidateError::Nested(rod_issue_path, ::std::boxed::Box::new(
+                                        RodValidateError::UserDefined(rod_issue_msg.to_string())
+                                    ))
+                                ))
+                            });
+                            quote! {
+                                let check_all_paths: fn(#field_type) -> Vec<(&'static str, &'static str)> = #closure;
+                                for (rod_issue_path, rod_issue_msg) in check_all_paths(#field_access) {
+                                    #ret;
+                                }
+                            }
+                        });
                         Some(quote! {
                             #check_all
+                            #check_all_paths
                             #check
                             #validations_for_field
                         })
