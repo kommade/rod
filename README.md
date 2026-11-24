@@ -31,16 +31,16 @@ A powerful and flexible compile-time validation library for Rust structs and enu
 
 ## Quick Start
 
-Add Rod Validation to your `Cargo.toml`:
-
-```sh
-cargo add rod_validation
-```
-
-For regex support:
+To follow the Basic Usage example, enable the `regex` feature. The `format: Email` rule needs it:
 
 ```sh
 cargo add rod_validation --features regex
+```
+
+If you don't use regex-backed rules, you can install Rod Validation without the feature:
+
+```sh
+cargo add rod_validation
 ```
 
 For JSON Schema export and untrusted-input adapters:
@@ -50,6 +50,8 @@ cargo add rod_validation --features serde
 ```
 
 ## Basic Usage
+
+This example uses `format: Email`, which requires the `regex` feature enabled in Quick Start.
 
 ```rust
 use rod_validation::prelude::*;
